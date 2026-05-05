@@ -48,23 +48,14 @@ def classify_with_ai(transaction_name, tokenizer, model):
         skip_special_tokens=True
     ).strip()
 
-    # ----------------------------
-    # STRICT VALIDATION
-    # ----------------------------
-    strict_cat = "Others"
-    for cat in ALLOWED_CATEGORIES:
-        if cat.lower() in ai_response.lower():
-            strict_cat = cat
-            break
-
-    print("Strict cat : ", strict_cat)
-    return strict_cat
+    return ai_response
 
 # 3. MAIN WORKFLOW
 def process_all_transactions(transaction_list):
     """The logic your main streamlit_app.py will call."""
     tokenizer, model = load_micromodel()
     final_results = []
+    
 
     for name in transaction_list:
         # Step A: Check local rules first
@@ -73,17 +64,24 @@ def process_all_transactions(transaction_list):
         
         if match:
             print("Local match : ", match)
-            final_results.append(match)
         else:
             # Step B: Use AI if rules fail
             try:
-                ai_match = classify_with_ai(name, tokenizer, model)
-                final_results.append(ai_match)
-                print("AI match : ", ai_match)
+                match = classify_with_ai(name, tokenizer, model)
+                print("AI match : ", match)
             except Exception:
-                final_results.append("Others")
+                match = "Others"
                 print("AI Exception : ")
                 
+        filtered_result = "Others"
+        for cat in ALLOWED_CATEGORIES:
+            if cat.lower() in match.lower():
+                filtered_result = cat
+                break
+
+        print("Filtered match : ", filtered_result)
+        final_results.append(filtered_result)
+
     return final_results
 
 def classify_transactions_batch(transaction_list):
