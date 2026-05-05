@@ -1,17 +1,7 @@
 import streamlit as st
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import json
-
-# 1. LOCAL RULES (The "Shield")
-# These handle 80% of SG transactions with 0% AI effort
-SG_MAPPING = {
-    "Transport": ["esso", "shell", "spc", "caltex", "simplygo", "lta", "mrt", "bus", "grab", "gojek", "tada", "comfortdelgro", "ez-link"],
-    "Food & Dining": ["kopitiam", "food republic", "mcdonald", "starbucks", "grabfood", "foodpanda", "toast box", "breadtalk", "old chang kee"],
-    "Groceries": ["ntuc", "fairprice", "sheng siong", "cold storage", "giant", "don don donki", "redmart"],
-    "Shopping": ["shopee", "lazada", "amazon", "uniqlo", "taobao", "tiktok shop"],
-    "Bills": ["sp services", "singtel", "starhub", "m1", "netflix", "spotify"]
-}
+from config import SG_MAPPING, ALLOWED_CATEGORIES  # Centralized source of truth
 
 def get_local_category(desc):
     desc_lower = str(desc).lower()
@@ -35,9 +25,12 @@ def load_micromodel():
     return tokenizer, model
 
 def classify_with_ai(transaction_name, tokenizer, model):
-    """Uses the micromodel to guess unknown categories."""
+    """Uses the micromodel and validates against ALLOWED_CATEGORIES."""
+    # Build prompt using categories from config
+    cat_options = ", ".join([c for c in ALLOWED_CATEGORIES if c != "Others"])
+    
     prompt_template = [
-        {"role": "system", "content": "You are a Singapore expense assistant. Categorize the transaction into: Food & Dining, Transport, Groceries, Shopping, Bills, or Others. Return ONLY the category name."},
+        {"role": "system", "content": f"You are a Singapore expense assistant. Categorize into ONLY one of these: {cat_options}. Return ONLY the category name."},
         {"role": "user", "content": f"Transaction: {transaction_name}"}
     ]
     
@@ -45,13 +38,19 @@ def classify_with_ai(transaction_name, tokenizer, model):
     inputs = tokenizer(input_text, return_tensors="pt")
     
     with torch.no_grad():
-        # Limit tokens to 5 to force a short answer and save RAM
-        outputs = model.generate(**inputs, max_new_tokens=5, temperature=0.1)
+        # Short tokens to prevent rambling
+        outputs = model.generate(**inputs, max_new_tokens=10, temperature=0.1)
     
     full_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    # Extract the assistant's specific answer
-    category = full_output.split("assistant")[-1].strip()
-    return category
+    ai_response = full_output.split("assistant")[-1].strip()
+
+    # --- STRICT VALIDATION ---
+    # Check if the AI's response exists in our allowed list
+    for valid_cat in ALLOWED_CATEGORIES:
+        if valid_cat.lower() in ai_response.lower():
+            return valid_cat
+            
+    return "Others"
 
 # 3. MAIN WORKFLOW
 def process_all_transactions(transaction_list):
@@ -76,9 +75,5 @@ def process_all_transactions(transaction_list):
     return final_results
 
 def classify_transactions_batch(transaction_list):
-    """
-    This is the entry point called by the Streamlit app.
-    It wraps the process_all_transactions logic.
-    """
-    # Simply call your existing workflow
+    """Entry point for batch processing."""
     return process_all_transactions(transaction_list)

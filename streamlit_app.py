@@ -4,9 +4,9 @@ import plotly.express as px
 from ai_logic import classify_transactions_batch
 from datetime import datetime
 from telemetry import check_db, log_manual_category_override
+from config import REQUIRED_COLUMNS
 
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
-
 
 # ----------------------------
 # DB HEALTH CHECK (ONCE)
@@ -21,7 +21,7 @@ if "db_ok" not in st.session_state:
 # 1. Initialize Master Data
 if "master_df" not in st.session_state:
     # Ensure Date column is datetime type for sorting
-    st.session_state.master_df = pd.DataFrame(columns=["Date", "Month", "Year", "Description", "Amount", "Category"])
+    st.session_state.master_df = pd.DataFrame(columns = REQUIRED_COLUMNS)
 
 st.title("💳 SG Multi-Month Spend Tracker")
 
