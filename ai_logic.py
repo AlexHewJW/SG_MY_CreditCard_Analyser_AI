@@ -41,15 +41,20 @@ def classify_with_ai(transaction_name, tokenizer, model):
         # Short tokens to prevent rambling
         outputs = model.generate(**inputs, max_new_tokens=10, temperature=0.1)
     
-    full_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    ai_response = full_output.split("assistant")[-1].strip()
+    input_len = inputs["input_ids"].shape[1]
 
-    # --- STRICT VALIDATION ---
-    # Check if the AI's response exists in our allowed list
-    for valid_cat in ALLOWED_CATEGORIES:
-        if valid_cat.lower() in ai_response.lower():
-            return valid_cat
-            
+    ai_response = tokenizer.decode(
+        outputs[0][input_len:],   # only decode new generated tokens
+        skip_special_tokens=True
+    ).strip()
+
+    # ----------------------------
+    # STRICT VALIDATION
+    # ----------------------------
+    for cat in ALLOWED_CATEGORIES:
+        if cat.lower() in ai_response.lower():
+            return cat
+
     return "Others"
 
 # 3. MAIN WORKFLOW
