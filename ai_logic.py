@@ -51,11 +51,14 @@ def classify_with_ai(transaction_name, tokenizer, model):
     # ----------------------------
     # STRICT VALIDATION
     # ----------------------------
+    strict_cat = "Others"
     for cat in ALLOWED_CATEGORIES:
         if cat.lower() in ai_response.lower():
-            return cat
+            strict_cat = cat
+            break
 
-    return "Others"
+    print("Strict cat : ", strict_cat)
+    return strict_cat
 
 # 3. MAIN WORKFLOW
 def process_all_transactions(transaction_list):
