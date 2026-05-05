@@ -68,17 +68,21 @@ def process_all_transactions(transaction_list):
 
     for name in transaction_list:
         # Step A: Check local rules first
+        print("Processing : ", name)
         match = get_local_category(name)
         
         if match:
+            print("Local match : ", match)
             final_results.append(match)
         else:
             # Step B: Use AI if rules fail
             try:
                 ai_match = classify_with_ai(name, tokenizer, model)
                 final_results.append(ai_match)
+                print("AI match : ", ai_match)
             except Exception:
                 final_results.append("Others")
+                print("AI Exception : ")
                 
     return final_results
 
