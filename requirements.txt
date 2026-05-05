@@ -1,6 +1,8 @@
-torch==2.9.0+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
-transformers
+
+torch==2.2.2
+torchvision==0.17.2
+transformers==4.41.0
 accelerate
 streamlit
 plotly
