@@ -8,9 +8,96 @@ from datetime import datetime
 from telemetry import check_db, log_manual_category_override
 from config import REQUIRED_COLUMNS
 
-
-
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
+
+def extract_pdf_text(file) -> str:
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            text += p.extract_text() or ""
+    return text
+
+def extract_pdf_tables(file):
+    import re
+    text = extract_pdf_text(file)
+    lines = text.split('\n')
+    
+    all_rows = []
+    # Headers stay for the DataFrame structure
+    all_rows.append(["Date", "Description", "Amount", "Balance"])
+
+    date_regex = r"^(\d{2}\s[A-Z]{3})\s"
+    # List of keywords that mean "this is a footer or bank info, not a spend"
+    noise_keywords = [
+        "STATEMENT OF ACCOUNT", "OCBC Bank", "Page", "Account No", 
+        "BALANCE B/F", "BALANCE C/F", "Total Withdrawals", "Deposit Insurance",
+        "Co. Reg. No", "Singapore dollar deposits", "65 Chulia Street"
+    ]
+    
+    current_tx = None
+
+    for line in lines:
+        line = line.strip()
+        # Skip if line is empty or matches known noise
+        if not line or any(k in line for k in noise_keywords):
+            continue
+
+        date_match = re.match(date_regex, line)
+
+        if date_match:
+            if current_tx:
+                all_rows.append(current_tx)
+            
+            # Extract numbers
+            nums = re.findall(r"(\d[\d,.]*\.\d{2})", line)
+            tx_date = date_match.group(1)
+            
+            # Clean up the initial description line
+            desc_start = line[len(tx_date):].strip()
+            # Remove the transaction value date (OCBC repeats the date twice)
+            desc_start = re.sub(r"^\d{2}\s[A-Z]{3}\s", "", desc_start)
+            
+            for n in nums:
+                desc_start = desc_start.replace(n, "").strip()
+
+            current_tx = [
+                tx_date, 
+                desc_start, 
+                nums[0] if len(nums) > 1 else (nums[0] if len(nums) == 1 else "0.00"),
+                nums[-1] if nums else "0.00"
+            ]
+
+        elif current_tx:
+            # If the line is an ID number (like 23063506), it's noise for the AI
+            # We only append it if it looks like a merchant name (mostly letters)
+            if not re.match(r"^\d{5,}$", line): 
+                current_tx[1] = f"{current_tx[1]} {line}".strip()
+
+    if current_tx:
+        all_rows.append(current_tx)
+        
+    return all_rows
+
+def detect_bank(text: str) -> str:
+    t = text.lower()
+    if "development bank of singapore" in t or "dbs bank" in t:
+        return "DBS"
+    if "oversea-chinese banking corporation" in t or "ocbc" in t:
+        return "OCBC"
+    if "united overseas bank" in t or "uob" in t:
+        return "UOB"
+    return "UNKNOWN"
+
+def clean_amount(series):
+    return (
+        series.astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("sgd", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.strip()
+        .apply(lambda x: re.sub(r"[^\d\-.]", "", x))
+        .astype(float, errors="ignore")
+    )
 
 # ----------------------------
 # DB HEALTH CHECK (ONCE)
@@ -129,44 +216,49 @@ tab1, tab2 = st.tabs(["📂 Batch Upload (CSV)", "✍️ Manual Entry"])
 
 
 with tab1:
-    uploaded_file = st.file_uploader(
-        "Upload Bank Statement (CSV or PDF)",
-        type=["csv", "pdf"]
-    )
+    uploaded_file = st.file_uploader("Upload OCBC Statement", type=["pdf"])
 
     if uploaded_file:
-        df = None
-        bank = "UNKNOWN"
+        with st.spinner("Processing Transactions..."):
+            # 1. Extract and Filter
+            clean_data = extract_pdf_tables(uploaded_file)
+            
+            # 2. Convert to DataFrame
+            df = pd.DataFrame(clean_data[1:], columns=clean_data[0])
 
-        # ===== CSV =====
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
+            # 3. Drop Balance column immediately to avoid confusion
+            if 'Balance' in df.columns:
+                df = df.drop(columns=['Balance'])
 
-        # ===== PDF =====
-        else:
-            with st.spinner("Reading PDF..."):
-                text = extract_pdf_text(uploaded_file)
-                bank = detect_bank(text)
-                st.info(f"Detected bank: {bank}")
+            # 4. Clean numeric data
+            # Strip commas and convert to float for logic
+            df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(',', ''), errors='coerce')
+            
+            # Remove zeros/NaNs (like balance forward lines)
+            df = df[df['Amount'] > 0].dropna(subset=['Amount'])
 
-                df = extract_pdf_tables(uploaded_file)
+            # 5. Format for UI: Add SGD and force Left Alignment
+            # We convert to string here to ensure it aligns left in the table
+            df['Amount'] = df['Amount'].apply(lambda x: f"SGD {x:,.2f}")
 
-                if df.empty:
-                    st.warning("Could not auto-detect tables. Showing raw text.")
-                    st.text(text[:3000])
-                    st.stop()
-
-        # ===== PREVIEW =====
-        st.subheader("Detected Data Preview")
-        st.dataframe(df.head(), use_container_width=True)
-
-        # ===== USER COLUMN MAPPING =====
-        c_desc = st.selectbox("Description Column", df.columns)
-        c_amt  = st.selectbox("Amount Column", df.columns)
-        c_date = st.selectbox(
-            "Date Column (optional)",
-            ["<None>"] + list(df.columns)
+        # ===== PREVIEW & MAPPING =====
+        st.subheader("Final Data for AI Processing")
+        
+        # Display clean version without Balance
+        st.dataframe(
+            df,
+            column_config={
+                "Date": st.column_config.TextColumn("Date", width="small"),
+                "Description": st.column_config.TextColumn("Description", width="large"),
+                "Amount": st.column_config.TextColumn("Amount") # Left Aligned
+            },
+            use_container_width=True,
+            hide_index=True
         )
+
+        # c_desc = st.selectbox("Description Column", df.columns, index=1)
+        # c_amt  = st.selectbox("Amount Column (Withdrawal)", df.columns, index=2)
+        # c_date = st.selectbox("Date Column", ["<None>"] + list(df.columns), index=1)
 
         if st.button("🚀 Process & Add Transactions"):
             work = df.copy()
@@ -263,50 +355,3 @@ if not st.session_state.master_df.empty:
                     st.session_state.master_df = st.session_state.master_df.drop(index)
                     st.rerun()
             st.write("---")
-
-
-
-def extract_pdf_tables(file):
-    rows = []
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            for table in page.extract_tables():
-                if not table or len(table) < 2:
-                    continue
-                headers = table[0]
-                for r in table[1:]:
-                    if len(r) == len(headers):
-                        rows.append(dict(zip(headers, r)))
-    return pd.DataFrame(rows)
-
-
-def extract_pdf_text(file) -> str:
-    text = ""
-    with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
-            text += p.extract_text() or ""
-    return text
-
-
-def detect_bank(text: str) -> str:
-    t = text.lower()
-    if "development bank of singapore" in t or "dbs bank" in t:
-        return "DBS"
-    if "oversea-chinese banking corporation" in t or "ocbc" in t:
-        return "OCBC"
-    if "united overseas bank" in t or "uob" in t:
-        return "UOB"
-    return "UNKNOWN"
-
-    
-def clean_amount(series):
-    return (
-        series.astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace("sgd", "", regex=False)
-        .str.replace("$", "", regex=False)
-        .str.strip()
-        .apply(lambda x: re.sub(r"[^\d\-.]", "", x))
-        .astype(float, errors="ignore")
-    )
-
