@@ -1,12 +1,19 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
+# AI
 torch==2.9.1+cpu
 torchvision==0.24.1+cpu
-
 transformers
+
 accelerate
 streamlit
 plotly
 psutil
 sqlalchemy
 psycopg2-binary
+sentencepiece
+
+# PDF bank statement support (DBS / OCBC / UOB)
+pdfplumber>=0.10
+pdfminer.six>=20221105
+Pillow>=10.0

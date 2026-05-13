@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import pdfplumber
+import re
 from ai_logic import classify_transactions_batch
 from datetime import datetime
 from telemetry import check_db, log_manual_category_override
 from config import REQUIRED_COLUMNS
+
+
 
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
 
@@ -123,32 +127,91 @@ if not st.session_state.master_df.empty:
 # 4. Entry Tabs
 tab1, tab2 = st.tabs(["📂 Batch Upload (CSV)", "✍️ Manual Entry"])
 
+
 with tab1:
-    uploaded_file = st.file_uploader("Upload Bank CSV", type="csv")
+    uploaded_file = st.file_uploader(
+        "Upload Bank Statement (CSV or PDF)",
+        type=["csv", "pdf"]
+    )
+
     if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        # Filter out 0 or negative amounts immediately from the uploaded CSV
-        c_desc = st.selectbox("Description Column", df.columns, key="csv_desc")
-        c_amt = st.selectbox("Amount Column", df.columns, key="csv_amt")
-        
-        if st.button("🚀 Process & Add CSV"):
-            # 1. CLEANING: Remove rows with 0 amount or empty descriptions
-            df_filtered = df[(df[c_amt] > 0) & (df[c_desc].notna()) & (df[c_desc].astype(str).str.strip() != "")]
-            
-            if df_filtered.empty:
-                st.error("The CSV contains no valid transactions (0.00 amount or empty descriptions).")
+        df = None
+        bank = "UNKNOWN"
+
+        # ===== CSV =====
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+
+        # ===== PDF =====
+        else:
+            with st.spinner("Reading PDF..."):
+                text = extract_pdf_text(uploaded_file)
+                bank = detect_bank(text)
+                st.info(f"Detected bank: {bank}")
+
+                df = extract_pdf_tables(uploaded_file)
+
+                if df.empty:
+                    st.warning("Could not auto-detect tables. Showing raw text.")
+                    st.text(text[:3000])
+                    st.stop()
+
+        # ===== PREVIEW =====
+        st.subheader("Detected Data Preview")
+        st.dataframe(df.head(), use_container_width=True)
+
+        # ===== USER COLUMN MAPPING =====
+        c_desc = st.selectbox("Description Column", df.columns)
+        c_amt  = st.selectbox("Amount Column", df.columns)
+        c_date = st.selectbox(
+            "Date Column (optional)",
+            ["<None>"] + list(df.columns)
+        )
+
+        if st.button("🚀 Process & Add Transactions"):
+            work = df.copy()
+
+            # Amount cleaning
+            work[c_amt] = clean_amount(work[c_amt])
+
+            # Date handling
+            if c_date != "<None>":
+                work["__date"] = pd.to_datetime(work[c_date], errors="coerce")
             else:
-                with st.spinner(f"AI Categorizing {len(df_filtered)} valid transactions..."):
-                    descs = df_filtered[c_desc].astype(str).tolist()
-                    cats = classify_transactions_batch(descs)
-                    new_rows = pd.DataFrame({
-                        "Date": [pd.to_datetime(datetime.now().strftime("%Y-%m-%d"))] * len(descs),
-                        "Month": default_month, "Year": default_year,
-                        "Description": descs, "Amount": df_filtered[c_amt], "Category": cats
-                    })
-                    st.session_state.master_df = pd.concat([st.session_state.master_df, new_rows], ignore_index=True)
-                    st.success(f"Added {len(new_rows)} items. (Skipped 0.00 or empty rows)")
-                    st.rerun()
+                work["__date"] = pd.Timestamp.today()
+
+            # Validation
+            work = work[
+                (work[c_amt] > 0) &
+                work[c_desc].notna() &
+                (work[c_desc].astype(str).str.strip() != "")
+            ]
+
+            if work.empty:
+                st.error("No valid transactions after cleaning.")
+                st.stop()
+
+            # ===== AI CATEGORY =====
+            with st.spinner(f"AI categorizing {len(work)} rows…"):
+                descs = work[c_desc].astype(str).tolist()
+                cats = classify_transactions_batch(descs)
+
+            new_rows = pd.DataFrame({
+                "Date": work["__date"],
+                "Month": default_month,
+                "Year": default_year,
+                "Description": descs,
+                "Amount": work[c_amt].astype(float),
+                "Category": cats
+            })
+
+            st.session_state.master_df = pd.concat(
+                [st.session_state.master_df, new_rows],
+                ignore_index=True
+            )
+
+            st.success(f"Added {len(new_rows)} transactions ✅")
+            st.rerun()
 
 with tab2:
     with st.form("manual_form", clear_on_submit=True):
@@ -200,3 +263,50 @@ if not st.session_state.master_df.empty:
                     st.session_state.master_df = st.session_state.master_df.drop(index)
                     st.rerun()
             st.write("---")
+
+
+
+def extract_pdf_tables(file):
+    rows = []
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables():
+                if not table or len(table) < 2:
+                    continue
+                headers = table[0]
+                for r in table[1:]:
+                    if len(r) == len(headers):
+                        rows.append(dict(zip(headers, r)))
+    return pd.DataFrame(rows)
+
+
+def extract_pdf_text(file) -> str:
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            text += p.extract_text() or ""
+    return text
+
+
+def detect_bank(text: str) -> str:
+    t = text.lower()
+    if "development bank of singapore" in t or "dbs bank" in t:
+        return "DBS"
+    if "oversea-chinese banking corporation" in t or "ocbc" in t:
+        return "OCBC"
+    if "united overseas bank" in t or "uob" in t:
+        return "UOB"
+    return "UNKNOWN"
+
+    
+def clean_amount(series):
+    return (
+        series.astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("sgd", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.strip()
+        .apply(lambda x: re.sub(r"[^\d\-.]", "", x))
+        .astype(float, errors="ignore")
+    )
+

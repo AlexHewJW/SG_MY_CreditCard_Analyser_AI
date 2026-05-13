@@ -1,8 +1,11 @@
 import streamlit as st
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from config import SG_MAPPING, ALLOWED_CATEGORIES  # Centralized source of truth
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from config import SG_MAPPING, ALLOWED_CATEGORIES
 
+# --------------------------------------------------
+# 1. RULE-BASED MATCH (FAST & PRECISE)
+# --------------------------------------------------
 def get_local_category(desc):
     desc_lower = str(desc).lower()
     for category, keywords in SG_MAPPING.items():
@@ -10,80 +13,75 @@ def get_local_category(desc):
             return category
     return None
 
-# 2. THE MICROMODEL (The "Brain")
+# --------------------------------------------------
+# 2. LOAD TRAINED CLASSIFIER (FROM HUGGING FACE)
+# --------------------------------------------------
+
 @st.cache_resource
 def load_micromodel():
-    """Loads the 135M model into RAM once. Uses ~350MB."""
-    checkpoint = "HuggingFaceTB/SmolLM2-135M-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    # Using float16 on CPU to save memory
-    model = AutoModelForCausalLM.from_pretrained(
-        checkpoint, 
-        torch_dtype=torch.float16, 
-        device_map="cpu"
+    checkpoint = "immaxowa/sg-expense-classifier"
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        checkpoint,
+        use_fast=False
     )
+
+    model = AutoModelForSequenceClassification.from_pretrained(
+        checkpoint,
+        device_map="cpu",
+        torch_dtype=torch.float32
+    )
+
+    model.eval()
     return tokenizer, model
 
+# --------------------------------------------------
+# 3. AI CLASSIFICATION (LOGITS → ARGMAX)
+# --------------------------------------------------
 def classify_with_ai(transaction_name, tokenizer, model):
-    """Uses the micromodel and validates against ALLOWED_CATEGORIES."""
-    # Build prompt using categories from config
-    cat_options = ", ".join([c for c in ALLOWED_CATEGORIES if c != "Others"])
-    
-    prompt_template = [
-        {"role": "system", "content": f"You are a Singapore expense assistant. Categorize into ONLY one of these: {cat_options}. Return ONLY the category name."},
-        {"role": "user", "content": f"Transaction: {transaction_name}"}
-    ]
-    
-    input_text = tokenizer.apply_chat_template(prompt_template, tokenize=False)
-    inputs = tokenizer(input_text, return_tensors="pt")
-    
+    """
+    Classify a transaction using the trained classifier.
+    Always returns EXACTLY one category from ALLOWED_CATEGORIES.
+    """
+    inputs = tokenizer(
+        transaction_name,
+        return_tensors="pt",
+        truncation=True
+    )
+
     with torch.no_grad():
-        # Short tokens to prevent rambling
-        outputs = model.generate(**inputs, max_new_tokens=10, temperature=0.1)
-    
-    input_len = inputs["input_ids"].shape[1]
+        logits = model(**inputs).logits
+        pred_id = logits.argmax(dim=-1).item()
 
-    ai_response = tokenizer.decode(
-        outputs[0][input_len:],   # only decode new generated tokens
-        skip_special_tokens=True
-    ).strip()
+    return ALLOWED_CATEGORIES[pred_id]
 
-    return ai_response
-
-# 3. MAIN WORKFLOW
+# --------------------------------------------------
+# 4. MAIN WORKFLOW (RULES → AI FALLBACK)
+# --------------------------------------------------
 def process_all_transactions(transaction_list):
-    """The logic your main streamlit_app.py will call."""
+    """
+    Core logic used by streamlit_app.py
+    """
     tokenizer, model = load_micromodel()
     final_results = []
-    
 
     for name in transaction_list:
-        # Step A: Check local rules first
-        print("Processing : ", name)
+        # Step A: Try rule-based detection first
         match = get_local_category(name)
-        
-        if match:
-            print("Local match : ", match)
-        else:
-            # Step B: Use AI if rules fail
+
+        # Step B: Use AI only if rules fail
+        if not match:
             try:
                 match = classify_with_ai(name, tokenizer, model)
-                print("AI match : ", match)
             except Exception:
                 match = "Others"
-                print("AI Exception : ")
-                
-        filtered_result = "Others"
-        for cat in ALLOWED_CATEGORIES:
-            if cat.lower() in match.lower():
-                filtered_result = cat
-                break
 
-        print("Filtered match : ", filtered_result)
-        final_results.append(filtered_result)
+        final_results.append(match)
 
     return final_results
 
+# --------------------------------------------------
+# 5. PUBLIC ENTRY POINT
+# --------------------------------------------------
 def classify_transactions_batch(transaction_list):
-    """Entry point for batch processing."""
     return process_all_transactions(transaction_list)
