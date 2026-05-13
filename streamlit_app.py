@@ -22,60 +22,42 @@ def extract_pdf_tables(file):
     text = extract_pdf_text(file)
     lines = text.split('\n')
     
-    all_rows = []
-    # Headers stay for the DataFrame structure
-    all_rows.append(["Date", "Description", "Amount", "Balance"])
-
+    all_rows = [["Date", "Description", "Amount"]]
     date_regex = r"^(\d{2}\s[A-Z]{3})\s"
-    # List of keywords that mean "this is a footer or bank info, not a spend"
-    noise_keywords = [
-        "STATEMENT OF ACCOUNT", "OCBC Bank", "Page", "Account No", 
-        "BALANCE B/F", "BALANCE C/F", "Total Withdrawals", "Deposit Insurance",
-        "Co. Reg. No", "Singapore dollar deposits", "65 Chulia Street"
-    ]
     
     current_tx = None
 
     for line in lines:
-        line = line.strip()
-        # Skip if line is empty or matches known noise
-        if not line or any(k in line for k in noise_keywords):
+        clean_line = line.strip()
+        
+        # 1. Start a New Transaction
+        date_match = re.match(date_regex, clean_line)
+        if date_match:
+            if current_tx: all_rows.append(current_tx)
+            
+            nums = re.findall(r"(\d[\d,.]*\.\d{2})", clean_line)
+            tx_date = date_match.group(1)
+            # Basic cleaning
+            desc = clean_line[len(tx_date):].strip()
+            desc = re.sub(r"^\d{2}\s[A-Z]{3}\s", "", desc)
+            for n in nums: desc = desc.replace(n, "").strip()
+
+            current_tx = [tx_date, desc, nums[0] if nums else "0.00"]
             continue
 
-        date_match = re.match(date_regex, line)
-
-        if date_match:
-            if current_tx:
+        # 2. Append to Description ONLY if it looks safe
+        if current_tx:
+            # STOP if the description gets too long (most merchants are < 100 chars)
+            # OR if we hit common footer words
+            if len(current_tx[1]) > 150 or any(x in clean_line.upper() for x in ["PAGE", "CHECK YOUR", "TOTAL"]):
                 all_rows.append(current_tx)
-            
-            # Extract numbers
-            nums = re.findall(r"(\d[\d,.]*\.\d{2})", line)
-            tx_date = date_match.group(1)
-            
-            # Clean up the initial description line
-            desc_start = line[len(tx_date):].strip()
-            # Remove the transaction value date (OCBC repeats the date twice)
-            desc_start = re.sub(r"^\d{2}\s[A-Z]{3}\s", "", desc_start)
-            
-            for n in nums:
-                desc_start = desc_start.replace(n, "").strip()
+                current_tx = None
+            else:
+                # Only add the line if it's not a random number/junk
+                if not re.match(r"^\d{5,}$", clean_line):
+                    current_tx[1] = f"{current_tx[1]} {clean_line}".strip()
 
-            current_tx = [
-                tx_date, 
-                desc_start, 
-                nums[0] if len(nums) > 1 else (nums[0] if len(nums) == 1 else "0.00"),
-                nums[-1] if nums else "0.00"
-            ]
-
-        elif current_tx:
-            # If the line is an ID number (like 23063506), it's noise for the AI
-            # We only append it if it looks like a merchant name (mostly letters)
-            if not re.match(r"^\d{5,}$", line): 
-                current_tx[1] = f"{current_tx[1]} {line}".strip()
-
-    if current_tx:
-        all_rows.append(current_tx)
-        
+    if current_tx: all_rows.append(current_tx)
     return all_rows
 
 def detect_bank(text: str) -> str:
@@ -220,45 +202,69 @@ with tab1:
 
     if uploaded_file:
         with st.spinner("Processing Transactions..."):
-            # 1. Extract and Filter
+            # 1. Extract raw rows from PDF
             clean_data = extract_pdf_tables(uploaded_file)
             
-            # 2. Convert to DataFrame
+            # 2. Convert to DataFrame (using the headers from extract_pdf_tables)
             df = pd.DataFrame(clean_data[1:], columns=clean_data[0])
 
-            # 3. Drop Balance column immediately to avoid confusion
+            # 3. Security: Remove 'Balance' immediately to prevent misleading totals
             if 'Balance' in df.columns:
                 df = df.drop(columns=['Balance'])
 
-            # 4. Clean numeric data
-            # Strip commas and convert to float for logic
+            # 4. Data Cleaning
+            # Convert Amount to float first to filter out zero-value rows (like headers/footers)
             df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(',', ''), errors='coerce')
-            
-            # Remove zeros/NaNs (like balance forward lines)
             df = df[df['Amount'] > 0].dropna(subset=['Amount'])
 
-            # 5. Format for UI: Add SGD and force Left Alignment
-            # We convert to string here to ensure it aligns left in the table
+            # 5. UI Formatting: Apply SGD prefix and String conversion for Left Alignment
+            # We store the display version in the dataframe for the preview
             df['Amount'] = df['Amount'].apply(lambda x: f"SGD {x:,.2f}")
 
-        # ===== PREVIEW & MAPPING =====
-        st.subheader("Final Data for AI Processing")
-        
-        # Display clean version without Balance
+        # ===== PREVIEW =====
+        st.subheader("🔍 Cleaned Transaction Preview")
         st.dataframe(
             df,
             column_config={
                 "Date": st.column_config.TextColumn("Date", width="small"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
-                "Amount": st.column_config.TextColumn("Amount") # Left Aligned
+                "Amount": st.column_config.TextColumn("Amount") # Naturally aligns left
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # c_desc = st.selectbox("Description Column", df.columns, index=1)
-        # c_amt  = st.selectbox("Amount Column (Withdrawal)", df.columns, index=2)
-        # c_date = st.selectbox("Date Column", ["<None>"] + list(df.columns), index=1)
+        # ===== PROCESSING =====
+        if st.button("🚀 Add to Master Tracker"):
+            with st.spinner("Finalizing data..."):
+                # Clean the data back to numeric for the master database
+                work_df = df.copy()
+                work_df['Amount'] = pd.to_numeric(
+                    work_df['Amount'].str.replace('SGD ', '').str.replace(',', '')
+                )
+                
+                # Get AI Categories
+                descs = work_df['Description'].tolist()
+                cats = classify_transactions_batch(descs)
+                
+                # Build the final rows for storage
+                new_rows = pd.DataFrame({
+                    "Date": pd.to_datetime(work_df['Date'] + f" {default_year}", format='%d %b %Y'),
+                    "Description": descs,
+                    "Amount": work_df['Amount'],
+                    "Category": cats,
+                    "Month": default_month,
+                    "Year": default_year
+                })
+                
+                # Append to session state
+                st.session_state.master_df = pd.concat(
+                    [st.session_state.master_df, new_rows], 
+                    ignore_index=True
+                )
+                
+                st.success(f"Successfully added {len(new_rows)} transactions!")
+                st.rerun()
 
         if st.button("🚀 Process & Add Transactions"):
             work = df.copy()
