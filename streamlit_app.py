@@ -8,6 +8,9 @@ from datetime import datetime
 from telemetry import check_db, log_manual_category_override
 from config import REQUIRED_COLUMNS
 
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
 
 def extract_pdf_text(file) -> str:
@@ -196,29 +199,34 @@ if not st.session_state.master_df.empty:
 # 4. Entry Tabs
 tab1, tab2 = st.tabs(["📂 Batch Upload (CSV)", "✍️ Manual Entry"])
 
+# ----------------------------
+# RESET FLAG (MUST BE BEFORE UPLOADER)
+# ----------------------------
+if st.session_state.get("clear_pdf_uploader"):
+    st.session_state.pop("pdf_uploader", None)
+    st.session_state["clear_pdf_uploader"] = False
 
 with tab1:
-    uploaded_file = st.file_uploader("Upload OCBC Statement", type=["pdf"])
+    uploaded_file = st.file_uploader(
+        "Upload OCBC Statement",
+        type=["pdf"],
+        key=f"pdf_uploader_{st.session_state.uploader_key}"   # ✅ dynamic key
+    )
 
     if uploaded_file:
         with st.spinner("Processing Transactions..."):
-            # 1. Extract raw rows from PDF
             clean_data = extract_pdf_tables(uploaded_file)
-            
-            # 2. Convert to DataFrame (using the headers from extract_pdf_tables)
             df = pd.DataFrame(clean_data[1:], columns=clean_data[0])
 
-            # 3. Security: Remove 'Balance' immediately to prevent misleading totals
             if 'Balance' in df.columns:
                 df = df.drop(columns=['Balance'])
 
-            # 4. Data Cleaning
-            # Convert Amount to float first to filter out zero-value rows (like headers/footers)
-            df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(',', ''), errors='coerce')
+            df['Amount'] = pd.to_numeric(
+                df['Amount'].astype(str).str.replace(',', ''),
+                errors='coerce'
+            )
             df = df[df['Amount'] > 0].dropna(subset=['Amount'])
 
-            # 5. UI Formatting: Apply SGD prefix and String conversion for Left Alignment
-            # We store the display version in the dataframe for the preview
             df['Amount'] = df['Amount'].apply(lambda x: f"SGD {x:,.2f}")
 
         # ===== PREVIEW =====
@@ -228,7 +236,7 @@ with tab1:
             column_config={
                 "Date": st.column_config.TextColumn("Date", width="small"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
-                "Amount": st.column_config.TextColumn("Amount") # Naturally aligns left
+                "Amount": st.column_config.TextColumn("Amount")
             },
             use_container_width=True,
             hide_index=True
@@ -237,79 +245,38 @@ with tab1:
         # ===== PROCESSING =====
         if st.button("🚀 Add to Master Tracker"):
             with st.spinner("Finalizing data..."):
-                # Clean the data back to numeric for the master database
                 work_df = df.copy()
+
                 work_df['Amount'] = pd.to_numeric(
                     work_df['Amount'].str.replace('SGD ', '').str.replace(',', '')
                 )
-                
-                # Get AI Categories
+
                 descs = work_df['Description'].tolist()
                 cats = classify_transactions_batch(descs)
-                
-                # Build the final rows for storage
+
                 new_rows = pd.DataFrame({
-                    "Date": pd.to_datetime(work_df['Date'] + f" {default_year}", format='%d %b %Y'),
+                    "Date": pd.to_datetime(
+                        work_df['Date'] + f" {default_year}",
+                        format='%d %b %Y'
+                    ),
                     "Description": descs,
                     "Amount": work_df['Amount'],
                     "Category": cats,
                     "Month": default_month,
                     "Year": default_year
                 })
-                
-                # Append to session state
+
                 st.session_state.master_df = pd.concat(
-                    [st.session_state.master_df, new_rows], 
+                    [st.session_state.master_df, new_rows],
                     ignore_index=True
                 )
-                
+
+                # ✅ RESET uploader (THIS IS THE CORRECT WAY)
+                st.session_state.uploader_key += 1
+
                 st.success(f"Successfully added {len(new_rows)} transactions!")
                 st.rerun()
 
-        if st.button("🚀 Process & Add Transactions"):
-            work = df.copy()
-
-            # Amount cleaning
-            work[c_amt] = clean_amount(work[c_amt])
-
-            # Date handling
-            if c_date != "<None>":
-                work["__date"] = pd.to_datetime(work[c_date], errors="coerce")
-            else:
-                work["__date"] = pd.Timestamp.today()
-
-            # Validation
-            work = work[
-                (work[c_amt] > 0) &
-                work[c_desc].notna() &
-                (work[c_desc].astype(str).str.strip() != "")
-            ]
-
-            if work.empty:
-                st.error("No valid transactions after cleaning.")
-                st.stop()
-
-            # ===== AI CATEGORY =====
-            with st.spinner(f"AI categorizing {len(work)} rows…"):
-                descs = work[c_desc].astype(str).tolist()
-                cats = classify_transactions_batch(descs)
-
-            new_rows = pd.DataFrame({
-                "Date": work["__date"],
-                "Month": default_month,
-                "Year": default_year,
-                "Description": descs,
-                "Amount": work[c_amt].astype(float),
-                "Category": cats
-            })
-
-            st.session_state.master_df = pd.concat(
-                [st.session_state.master_df, new_rows],
-                ignore_index=True
-            )
-
-            st.success(f"Added {len(new_rows)} transactions ✅")
-            st.rerun()
 
 with tab2:
     with st.form("manual_form", clear_on_submit=True):
