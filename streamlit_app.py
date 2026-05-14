@@ -213,23 +213,35 @@ if st.session_state.show_edit:
     nt = st.date_input("Date", value=pd.to_datetime(row["Date"]))
 
     cats = ["Food & Dining","Transport","Groceries","Shopping","Bills","Others"]
-    nc = st.selectbox("Category", cats)
+    current_idx = cats.index(row["Category"]) if row["Category"] in cats else 5
+    nc = st.selectbox("Category", cats, index=current_idx)
 
     c1, c2, c3 = st.columns(3)
 
+    # ✅ SAVE
     if c1.button("Save"):
         st.session_state.master_df.at[i,"Description"] = nd
         st.session_state.master_df.at[i,"Amount"] = na
         st.session_state.master_df.at[i,"Category"] = nc
-        st.session_state.master_df.at[i,"Date"] = nt
+        st.session_state.master_df.at[i,"Date"] = pd.to_datetime(nt)   # ✅ FIX
+
+        # ✅ RESET INDEX (important)
+        st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
+
         st.session_state.show_edit = False
         st.rerun()
 
+    # ✅ DELETE
     if c2.button("Delete"):
         st.session_state.master_df = st.session_state.master_df.drop(i)
+
+        # ✅ RESET INDEX (important)
+        st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
+
         st.session_state.show_edit = False
         st.rerun()
 
+    # ✅ CANCEL
     if c3.button("Cancel"):
         st.session_state.show_edit = False
         st.rerun()
@@ -237,26 +249,34 @@ if st.session_state.show_edit:
     st.stop()
 
 # ----------------------------
-# HISTORY (✅ TABLE STYLE)
+# HISTORY (FIXED INDEX ALIGNMENT)
 # ----------------------------
 if not st.session_state.master_df.empty:
     st.subheader("📝 Transaction History")
 
-    df = st.session_state.master_df.sort_values(by="Date", ascending=False)
+    df = st.session_state.master_df.copy()
 
-    for idx, row in df.iterrows():
+    # ✅ FORCE consistent datetime
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    # ✅ SORT
+    df = df.sort_values(by="Date", ascending=False)
+
+    # ✅ USE POSITION (IMPORTANT FIX)
+    for pos, (idx, row) in enumerate(df.iterrows()):
         col1, col2, col3 = st.columns([6,2,2])
 
         with col1:
             st.write(f"**{row['Description']}**")
-            st.caption(f"{row['Category']} • {pd.to_datetime(row['Date']).strftime('%d %b %Y')}")
+            st.caption(f"{row['Category']} • {row['Date'].strftime('%d %b %Y')}")
 
         with col2:
             st.write(f"S$ {row['Amount']:.2f}")
 
         with col3:
-            if st.button("✏️ Edit", key=f"edit_{idx}", use_container_width=True):
-                st.session_state.edit_index = idx
+            # ✅ USE pos for key (not idx)
+            if st.button("✏️ Edit", key=f"edit_{pos}", use_container_width=True):
+                st.session_state.edit_index = idx   # ✅ original index preserved
                 st.session_state.show_edit = True
                 st.rerun()
 
