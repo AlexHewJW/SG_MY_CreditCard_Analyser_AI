@@ -11,6 +11,9 @@ from config import REQUIRED_COLUMNS
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
+if "is_processing_pdf" not in st.session_state:
+    st.session_state.is_processing_pdf = False
+
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
 
 def extract_pdf_text(file) -> str:
@@ -207,12 +210,25 @@ if st.session_state.get("clear_pdf_uploader"):
     st.session_state["clear_pdf_uploader"] = False
 
 with tab1:
+
+    if "uploader_key" not in st.session_state:
+        st.session_state.uploader_key = 0
+
+    if "is_processing_pdf" not in st.session_state:
+        st.session_state.is_processing_pdf = False
+
     uploaded_file = st.file_uploader(
         "Upload OCBC Statement",
         type=["pdf"],
-        key=f"pdf_uploader_{st.session_state.uploader_key}"   # ✅ dynamic key
+        key=f"pdf_uploader_{st.session_state.uploader_key}"
     )
 
+    if not uploaded_file:
+        st.info("📄 Upload a statement to begin")
+
+    # ----------------------------
+    # PREVIEW
+    # ----------------------------
     if uploaded_file:
         with st.spinner("Processing Transactions..."):
             clean_data = extract_pdf_tables(uploaded_file)
@@ -229,54 +245,63 @@ with tab1:
 
             df['Amount'] = df['Amount'].apply(lambda x: f"SGD {x:,.2f}")
 
-        # ===== PREVIEW =====
         st.subheader("🔍 Cleaned Transaction Preview")
-        st.dataframe(
-            df,
-            column_config={
-                "Date": st.column_config.TextColumn("Date", width="small"),
-                "Description": st.column_config.TextColumn("Description", width="large"),
-                "Amount": st.column_config.TextColumn("Amount")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-        # ===== PROCESSING =====
-        if st.button("🚀 Add to Master Tracker"):
-            with st.spinner("Finalizing data..."):
-                work_df = df.copy()
+    # ----------------------------
+    # ✅ PROCESS FIRST (IMPORTANT)
+    # ----------------------------
+    if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
+        with st.spinner("Finalizing data..."):
+            work_df = st.session_state.temp_df.copy()
 
-                work_df['Amount'] = pd.to_numeric(
-                    work_df['Amount'].str.replace('SGD ', '').str.replace(',', '')
-                )
+            work_df['Amount'] = pd.to_numeric(
+                work_df['Amount'].str.replace('SGD ', '').str.replace(',', '')
+            )
 
-                descs = work_df['Description'].tolist()
-                cats = classify_transactions_batch(descs)
+            descs = work_df['Description'].tolist()
+            cats = classify_transactions_batch(descs)
 
-                new_rows = pd.DataFrame({
-                    "Date": pd.to_datetime(
-                        work_df['Date'] + f" {default_year}",
-                        format='%d %b %Y'
-                    ),
-                    "Description": descs,
-                    "Amount": work_df['Amount'],
-                    "Category": cats,
-                    "Month": default_month,
-                    "Year": default_year
-                })
+            new_rows = pd.DataFrame({
+                "Date": pd.to_datetime(
+                    work_df['Date'] + f" {default_year}",
+                    format='%d %b %Y'
+                ),
+                "Description": descs,
+                "Amount": work_df['Amount'],
+                "Category": cats,
+                "Month": default_month,
+                "Year": default_year
+            })
 
-                st.session_state.master_df = pd.concat(
-                    [st.session_state.master_df, new_rows],
-                    ignore_index=True
-                )
+            st.session_state.master_df = pd.concat(
+                [st.session_state.master_df, new_rows],
+                ignore_index=True
+            )
 
-                # ✅ RESET uploader (THIS IS THE CORRECT WAY)
-                st.session_state.uploader_key += 1
+            # CLEANUP
+            del st.session_state["temp_df"]
 
-                st.success(f"Successfully added {len(new_rows)} transactions!")
-                st.rerun()
+            st.session_state.uploader_key += 1
+            st.session_state.is_processing_pdf = False
 
+            st.success(f"✅ Successfully added {len(new_rows)} transactions!")
+            st.rerun()
+
+    # ----------------------------
+    # ✅ THEN GUARD
+    # ----------------------------
+    if st.session_state.is_processing_pdf:
+        st.warning("Processing in progress... please wait.")
+        st.stop()
+
+    # ----------------------------
+    # BUTTON TRIGGER
+    # ----------------------------
+    if uploaded_file and st.button("🚀 Add to Master Tracker"):
+        st.session_state.temp_df = df.copy()
+        st.session_state.is_processing_pdf = True
+        st.rerun()
 
 with tab2:
     with st.form("manual_form", clear_on_submit=True):
