@@ -263,44 +263,35 @@ if st.session_state.show_edit:
     st.stop()
 
 # ----------------------------
-# HISTORY (FORMAL ALIGNED TABLE)
+# HISTORY
 # ----------------------------
 if not st.session_state.master_df.empty:
     st.subheader("📝 Transaction History")
 
-    # 1. Define Column Ratios
-    # [Date, Description, Category, Amount, Edit_Button]
-    col_widths = [1.5, 3.5, 2, 2, 1]
-
-    # 2. Header Row
-    h = st.columns(col_widths)
-    h[0].caption("**DATE**")
-    h[1].caption("**DESCRIPTION**")
-    h[2].caption("**CATEGORY**")
-    h[3].caption("**AMOUNT**")
-    h[4].caption("**ACTION**")
-    st.divider()
-
-    # 3. Data Rows
     df = st.session_state.master_df.copy()
+
+    # ✅ FORCE consistent datetime
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    # ✅ SORT
     df = df.sort_values(by="Date", ascending=False)
 
-    for idx, row in df.iterrows():
-        r = st.columns(col_widths)
-        
-        # Data columns
-        r[0].write(f"{row['Date'].strftime('%Y-%m-%d')}")
-        r[1].write(row['Description'][:30])
-        r[2].write(row['Category'])
-        r[3].write(f"S$ {row['Amount']:,.2f}")
-        
-        # The "Hidden" Clicker
-        # We make the button label "Edit" but stylistically it acts as the row trigger
-        if r[4].button("Edit", key=f"edit_{idx}", use_container_width=True):
-            st.session_state.edit_index = idx
-            st.session_state.show_edit = True
-            st.rerun()
-            
-        # Optional: Subtle line between rows for mobile scannability
-        st.markdown("<hr style='margin:0; padding:0; opacity:0.1'>", unsafe_allow_html=True)
+    # ✅ USE POSITION (IMPORTANT FIX)
+    for pos, (idx, row) in enumerate(df.iterrows()):
+        col1, col2, col3 = st.columns([6,2,2])
+
+        with col1:
+            st.write(f"**{row['Description']}**")
+            st.caption(f"{row['Category']} • {row['Date'].strftime('%d %b %Y')}")
+
+        with col2:
+            st.write(f"S$ {row['Amount']:.2f}")
+
+        with col3:
+            # ✅ USE pos for key (not idx)
+            if st.button("✏️ Edit", key=f"edit_{pos}", use_container_width=True):
+                st.session_state.edit_index = idx   # ✅ original index preserved
+                st.session_state.show_edit = True
+                st.rerun()
+
+        st.divider()
