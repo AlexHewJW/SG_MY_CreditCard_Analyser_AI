@@ -88,21 +88,26 @@ if "master_df" not in st.session_state:
 st.title("💳 SG Spend Tracker")
 
 # ----------------------------
-# SUMMARY (✅ MOVED UP, FIXES CHART DISAPPEAR)
+# SUMMARY
 # ----------------------------
 if not st.session_state.master_df.empty:
+    # Use a local copy and force numeric/datetime types immediately
     m_df = st.session_state.master_df.copy()
-    m_df["Date"] = pd.to_datetime(m_df["Date"])
+    m_df["Amount"] = pd.to_numeric(m_df["Amount"], errors="coerce").fillna(0.0)
+    m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
+    
+    # Drop rows that failed conversion to prevent Plotly errors
+    m_df = m_df.dropna(subset=["Amount", "Date"])
 
     col1, col2 = st.columns([1,2])
-
     with col1:
         st.metric("Total Spend", f"S${m_df['Amount'].sum():,.2f}")
-        summary = m_df.groupby("Category")["Amount"].sum()
-        st.dataframe(summary)
+        summary = m_df.groupby("Category")["Amount"].sum().reset_index()
+        st.dataframe(summary, hide_index=True)
 
     with col2:
         fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
+        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
@@ -137,32 +142,38 @@ with tab1:
 
     # ✅ PROCESS FIRST
     if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
-        work_df = st.session_state.temp_df.copy()
+        with st.spinner("AI is categorizing..."):
+            work_df = st.session_state.temp_df.copy()
 
-        work_df["Amount"] = pd.to_numeric(
-            work_df["Amount"].str.replace("SGD ","").str.replace(",","")
-        )
+            # REMOVE FORMATTING: Convert "SGD 1,234.56" -> 1234.56 (float)
+            work_df["Amount"] = (
+                work_df["Amount"]
+                .astype(str)
+                .str.replace("SGD", "", regex=False)
+                .str.replace(",", "", regex=False)
+                .str.strip()
+            )
+            work_df["Amount"] = pd.to_numeric(work_df["Amount"], errors="coerce").fillna(0.0)
 
-        descs = work_df["Description"].tolist()
-        cats = classify_transactions_batch(descs)
+            descs = work_df["Description"].tolist()
+            cats = classify_transactions_batch(descs)
 
-        new_rows = pd.DataFrame({
-            "Date": pd.to_datetime(work_df["Date"] + f" 2026", format="%d %b %Y"),
-            "Description": descs,
-            "Amount": work_df["Amount"],
-            "Category": cats,
-            "Month": "May",
-            "Year": 2026
-        })
+            new_rows = pd.DataFrame({
+                "Date": pd.to_datetime(work_df["Date"] + " 2026", format="%d %b %Y", errors='coerce'),
+                "Description": descs,
+                "Amount": work_df["Amount"].astype(float), # Ensure float!
+                "Category": cats,
+                "Month": "May",
+                "Year": 2026
+            }).dropna(subset=["Date"])
 
-        st.session_state.master_df = pd.concat([st.session_state.master_df, new_rows])
+            # Use ignore_index to prevent duplicate index errors
+            st.session_state.master_df = pd.concat([st.session_state.master_df, new_rows], ignore_index=True)
 
-        del st.session_state["temp_df"]
-        st.session_state.uploader_key += 1
-        st.session_state.is_processing_pdf = False
-
-        st.success("✅ Added transactions!")
-        st.rerun()
+            del st.session_state["temp_df"]
+            st.session_state.is_processing_pdf = False
+            st.session_state.uploader_key += 1
+            st.rerun()
 
     # ✅ GUARD (only tab-level)
     if st.session_state.is_processing_pdf:
@@ -196,7 +207,7 @@ with tab2:
                 "Category":[cat]
             })
 
-            st.session_state.master_df = pd.concat([st.session_state.master_df,new])
+            st.session_state.master_df = pd.concat([st.session_state.master_df,new], ignore_index=True)
             st.rerun()
 
 # ----------------------------
@@ -204,44 +215,47 @@ with tab2:
 # ----------------------------
 if st.session_state.show_edit:
     i = st.session_state.edit_index
-    row = st.session_state.master_df.loc[i]
+    
+    # Use .loc with a list then .iloc[0] to guarantee a single row object
+    try:
+        row = st.session_state.master_df.loc[[i]].iloc[0]
+    except (KeyError, IndexError):
+        st.error("Transaction no longer exists.")
+        st.session_state.show_edit = False
+        st.rerun()
 
     st.subheader("✏️ Edit Transaction")
 
-    nd = st.text_input("Description", value=row["Description"])
+    # Force values to primitive types (str, float) to avoid ValueError
+    nd = st.text_input("Description", value=str(row["Description"]))
     na = st.number_input("Amount", value=float(row["Amount"]))
     nt = st.date_input("Date", value=pd.to_datetime(row["Date"]))
 
     cats = ["Food & Dining","Transport","Groceries","Shopping","Bills","Others"]
-    current_idx = cats.index(row["Category"]) if row["Category"] in cats else 5
+    current_cat = str(row["Category"])
+    current_idx = cats.index(current_cat) if current_cat in cats else 5
     nc = st.selectbox("Category", cats, index=current_idx)
 
     c1, c2, c3 = st.columns(3)
 
-    # ✅ SAVE
     if c1.button("Save"):
-        st.session_state.master_df.at[i,"Description"] = nd
-        st.session_state.master_df.at[i,"Amount"] = na
-        st.session_state.master_df.at[i,"Category"] = nc
-        st.session_state.master_df.at[i,"Date"] = pd.to_datetime(nt)   # ✅ FIX
-
-        # ✅ RESET INDEX (important)
+        # Update using .at and ensure index is clean
+        st.session_state.master_df.at[i, "Description"] = nd
+        st.session_state.master_df.at[i, "Amount"] = float(na)
+        st.session_state.master_df.at[i, "Category"] = nc
+        st.session_state.master_df.at[i, "Date"] = pd.to_datetime(nt)
+        st.session_state.master_df.at[i, "Month"] = nt.strftime("%b")
+        st.session_state.master_df.at[i, "Year"] = nt.year
+        
         st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
-
         st.session_state.show_edit = False
         st.rerun()
 
-    # ✅ DELETE
     if c2.button("Delete"):
-        st.session_state.master_df = st.session_state.master_df.drop(i)
-
-        # ✅ RESET INDEX (important)
-        st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
-
+        st.session_state.master_df = st.session_state.master_df.drop(i).reset_index(drop=True)
         st.session_state.show_edit = False
         st.rerun()
 
-    # ✅ CANCEL
     if c3.button("Cancel"):
         st.session_state.show_edit = False
         st.rerun()
@@ -249,7 +263,7 @@ if st.session_state.show_edit:
     st.stop()
 
 # ----------------------------
-# HISTORY (FIXED INDEX ALIGNMENT)
+# HISTORY
 # ----------------------------
 if not st.session_state.master_df.empty:
     st.subheader("📝 Transaction History")
