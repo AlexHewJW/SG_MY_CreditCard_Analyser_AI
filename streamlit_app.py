@@ -110,34 +110,33 @@ st.title("💳 SG Spend Tracker")
 # ----------------------------
 # MONTH / YEAR FILTER
 # ----------------------------
-if not st.session_state.master_df.empty:
-    df_filter = st.session_state.master_df.copy()
+df_filter = st.session_state.master_df.copy()
 
-    df_filter["Date"] = pd.to_datetime(df_filter["Date"], errors="coerce")
-    df_filter = df_filter.dropna(subset=["Date"])
+df_filter["Date"] = pd.to_datetime(df_filter["Date"], errors="coerce")
+df_filter = df_filter.dropna(subset=["Date"])
 
-    df_filter["Year"] = df_filter["Date"].dt.year
-    df_filter["Month"] = df_filter["Date"].dt.strftime("%b")
+df_filter["Year"] = df_filter["Date"].dt.year
+df_filter["Month"] = df_filter["Date"].dt.strftime("%b")
 
-    current_year = datetime.now().year
-    years = list(range(1996, current_year + 1))
-    years = sorted(years, reverse=True)
-    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+current_year = datetime.now().year
+years = list(range(1996, current_year + 1))
+years = sorted(years, reverse=True)
+months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-    col1, col2 = st.columns(2)
+col1, col2 = st.columns(2)
 
-    with col1:
-        selected_year = st.selectbox("Year", years, key="filter_year")
+with col1:
+    selected_year = st.selectbox("Year", years, key="filter_year")
 
-    with col2:
-        selected_month = st.selectbox("Month", months, key="filter_month")
+with col2:
+    selected_month = st.selectbox("Month", months, key="filter_month")
 
-    # ✅ DEFAULT INITIAL VALUE (PUT HERE)
-    if "filter_year" not in st.session_state:
-        st.session_state.filter_year = datetime.now().year
+# ✅ DEFAULT INITIAL VALUE (PUT HERE)
+if "filter_year" not in st.session_state:
+    st.session_state.filter_year = datetime.now().year
 
-    if "filter_month" not in st.session_state:
-        st.session_state.filter_month = datetime.now().strftime("%b")
+if "filter_month" not in st.session_state:
+    st.session_state.filter_month = datetime.now().strftime("%b")
 
 # ----------------------------
 # SUMMARY
