@@ -107,12 +107,53 @@ if "master_df" not in st.session_state:
 
 st.title("💳 SG Spend Tracker")
 
+# ----------------------------
+# MONTH / YEAR FILTER
+# ----------------------------
+if not st.session_state.master_df.empty:
+    df_filter = st.session_state.master_df.copy()
+
+    df_filter["Date"] = pd.to_datetime(df_filter["Date"], errors="coerce")
+    df_filter = df_filter.dropna(subset=["Date"])
+
+    df_filter["Year"] = df_filter["Date"].dt.year
+    df_filter["Month"] = df_filter["Date"].dt.strftime("%b")
+
+    years = sorted(df_filter["Year"].dropna().unique(), reverse=True)
+    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_year = st.selectbox("Year", years, key="filter_year")
+
+    with col2:
+        selected_month = st.selectbox("Month", months, key="filter_month")
+
+    # ✅ DEFAULT INITIAL VALUE (PUT HERE)
+    if "filter_year" not in st.session_state:
+        st.session_state.filter_year = datetime.now().year
+
+    if "filter_month" not in st.session_state:
+        st.session_state.filter_month = datetime.now().strftime("%b")
 
 # ----------------------------
 # SUMMARY
 # ----------------------------
 if not st.session_state.master_df.empty:
+    
     m_df = st.session_state.master_df.copy()
+    m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
+
+    
+    if "filter_year" in st.session_state and "filter_month" in st.session_state:
+        m_df = m_df[
+            (m_df["Date"].dt.year == st.session_state.filter_year) &
+            (m_df["Date"].dt.strftime("%b") == st.session_state.filter_month)
+        ]
+
+
+
     m_df["Amount"] = pd.to_numeric(m_df["Amount"], errors="coerce").fillna(0.0)
     m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
     m_df = m_df.dropna(subset=["Amount", "Date"])
@@ -142,9 +183,13 @@ if not st.session_state.master_df.empty:
 
     # ✅ RIGHT SIDE (pie chart)
     with col2:
-        fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
-        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-        st.plotly_chart(fig, use_container_width=True)
+        if m_df.empty:
+            st.info("No data for selected month.")
+        else:
+            fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig, use_container_width=True)
+
 
     st.divider()
 
@@ -348,9 +393,16 @@ if not st.session_state.master_df.empty:
     else:
         st.subheader("📝 All Transactions")
 
+    
     df = st.session_state.master_df.copy()
-
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    
+    if "filter_year" in st.session_state and "filter_month" in st.session_state:
+        df = df[
+            (df["Date"].dt.year == st.session_state.filter_year) &
+            (df["Date"].dt.strftime("%b") == st.session_state.filter_month)
+        ]
 
     # ✅ FILTER LOGIC
     if "selected_category" in st.session_state:
