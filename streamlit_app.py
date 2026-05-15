@@ -233,6 +233,10 @@ with tab1:
             del st.session_state["temp_df"]
             st.session_state.is_processing_pdf = False
             st.session_state.uploader_key += 1
+
+            if "preview_df" in st.session_state:
+                del st.session_state.preview_df
+
             st.rerun()
 
     # ✅ GUARD (only tab-level)
