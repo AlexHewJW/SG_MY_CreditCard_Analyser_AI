@@ -8,6 +8,26 @@ from datetime import datetime
 from telemetry import check_db
 from config import REQUIRED_COLUMNS
 
+st.markdown("""
+<style>
+button {
+    border: 1px solid #e0e0e0 !important;   /* ✅ border added */
+    border-radius: 4px !important;
+    text-align: left !important;
+    padding: 6px 8px !important;
+    background: white !important;
+    width: 100% !important;
+    font-family: monospace !important;
+    font-size: 14px;
+}
+
+button:hover {
+    background-color: #f5f5f5 !important;
+    border-color: #bdbdbd !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
 
 # ----------------------------
@@ -87,30 +107,93 @@ if "master_df" not in st.session_state:
 
 st.title("💳 SG Spend Tracker")
 
+
 # ----------------------------
 # SUMMARY
 # ----------------------------
 if not st.session_state.master_df.empty:
-    # Use a local copy and force numeric/datetime types immediately
     m_df = st.session_state.master_df.copy()
     m_df["Amount"] = pd.to_numeric(m_df["Amount"], errors="coerce").fillna(0.0)
     m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
-    
-    # Drop rows that failed conversion to prevent Plotly errors
     m_df = m_df.dropna(subset=["Amount", "Date"])
 
     col1, col2 = st.columns([1,2])
+
+    # ✅ LEFT SIDE (clickable "table rows")
     with col1:
         st.metric("Total Spend", f"S${m_df['Amount'].sum():,.2f}")
-        summary = m_df.groupby("Category")["Amount"].sum().reset_index()
-        st.dataframe(summary, hide_index=True)
 
+        summary = m_df.groupby("Category")["Amount"].sum().reset_index()
+
+        st.subheader("By Category")
+
+        for i, row in summary.iterrows():
+            # ✅ Strong alignment using fixed width
+            text = f"{row['Category']:<25} S$ {row['Amount']:>10,.2f}"
+
+            if st.button(text, key=f"cat_{i}", use_container_width=True):
+                st.session_state.selected_category = row["Category"]
+
+    # ✅ RIGHT SIDE (pie chart)
     with col2:
         fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
+
+    # ----------------------------
+    # ✅ CATEGORY FILTER VIEW
+    # ----------------------------
+    if "selected_category" in st.session_state:
+        cat = st.session_state.selected_category
+
+        st.subheader(f"📂 {cat} Transactions")
+
+        filtered = m_df[m_df["Category"] == cat].sort_values(by="Date", ascending=False)
+
+        for _, row in filtered.iterrows():
+            c1, c2 = st.columns([6,2])
+
+            with c1:
+                st.write(f"**{row['Description']}**")
+                st.caption(row["Date"].strftime("%d %b %Y"))
+
+            with c2:
+                st.write(f"S$ {row['Amount']:.2f}")
+
+            st.divider()
+
+        
+        if st.button("❌ Clear Filter", key="clear_filter_btn"):
+            del st.session_state["selected_category"]
+            st.rerun()
+
+# ----------------------------
+    # ✅ CATEGORY FILTER VIEW
+    # ----------------------------
+    if "selected_category" in st.session_state:
+        cat = st.session_state.selected_category
+
+        st.subheader(f"📂 {cat} Transactions")
+
+        filtered = m_df[m_df["Category"] == cat].sort_values(by="Date", ascending=False)
+
+        for _, row in filtered.iterrows():
+            c1, c2 = st.columns([6,2])
+
+            with c1:
+                st.write(f"**{row['Description']}**")
+                st.caption(row["Date"].strftime("%d %b %Y"))
+
+            with c2:
+                st.write(f"S$ {row['Amount']:.2f}")
+
+            st.divider()
+
+        if st.button("❌ Clear Filter"):
+            del st.session_state["selected_category"]
+            st.rerun()
 
 # ----------------------------
 # TABS
@@ -126,9 +209,6 @@ with tab1:
         type=["pdf"],
         key=f"pdf_{st.session_state.uploader_key}"
     )
-
-    if not uploaded_file:
-        st.info("📄 Upload a statement to begin")
 
     if uploaded_file:
         clean = extract_pdf_tables(uploaded_file)
