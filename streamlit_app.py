@@ -171,7 +171,34 @@ with tab1:
         df = df[df["Amount"] > 0]
         df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
 
-        st.dataframe(df, use_container_width=True)
+        # ✅ store preview so deletion persists
+        if "preview_df" not in st.session_state:
+            st.session_state.preview_df = df.reset_index(drop=True)
+
+    # ✅ render preview with delete buttons
+    if "preview_df" in st.session_state and not st.session_state.preview_df.empty:
+        df = st.session_state.preview_df
+
+        st.subheader("Preview")
+
+        for i, row in df.iterrows():
+            col1, col2, col3, col4 = st.columns([2,6,2,1])
+
+            with col1:
+                st.write(row["Date"])
+
+            with col2:
+                st.write(row["Description"])
+
+            with col3:
+                st.write(row["Amount"])
+
+            with col4:
+                if st.button("🗑", key=f"preview_del_{i}"):
+                    st.session_state.preview_df = df.drop(i).reset_index(drop=True)
+                    st.rerun()
+
+        st.divider()
 
     # ✅ PROCESS FIRST
     if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
@@ -213,11 +240,24 @@ with tab1:
         st.warning("Processing...")
         st.stop()
 
-    # ✅ BUTTON
-    if uploaded_file and st.button("🚀 Add to Master Tracker"):
-        st.session_state.temp_df = df.copy()
-        st.session_state.is_processing_pdf = True
-        st.rerun()
+    # ✅ BUTTONS (Add + Discard)
+    if uploaded_file:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("🚀 Add to Master Tracker", use_container_width=True):
+                st.session_state.temp_df = df.copy()
+                st.session_state.is_processing_pdf = True
+                st.rerun()
+
+        with col2:
+            if st.button("❌ Discard", use_container_width=True):
+                # ✅ clear preview and reset uploader
+                if "preview_df" in st.session_state:
+                    del st.session_state.preview_df
+
+                st.session_state.uploader_key += 1  # reset file uploader
+                st.rerun()
 
 # ----------------------------
 # MANUAL ENTRY
