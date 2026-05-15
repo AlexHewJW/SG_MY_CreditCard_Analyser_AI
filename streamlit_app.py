@@ -127,6 +127,12 @@ if not st.session_state.master_df.empty:
 
         st.subheader("By Category")
 
+        # ✅ Reset Button
+        if "selected_category" in st.session_state:
+            if st.button("❌ Reset Filter", key="clear_filter_top"):
+                del st.session_state["selected_category"]
+                st.rerun()
+
         for i, row in summary.iterrows():
             # ✅ Strong alignment using fixed width
             text = f"{row['Category']:<25} S$ {row['Amount']:>10,.2f}"
@@ -141,59 +147,6 @@ if not st.session_state.master_df.empty:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-
-    # ----------------------------
-    # ✅ CATEGORY FILTER VIEW
-    # ----------------------------
-    if "selected_category" in st.session_state:
-        cat = st.session_state.selected_category
-
-        st.subheader(f"📂 {cat} Transactions")
-
-        filtered = m_df[m_df["Category"] == cat].sort_values(by="Date", ascending=False)
-
-        for _, row in filtered.iterrows():
-            c1, c2 = st.columns([6,2])
-
-            with c1:
-                st.write(f"**{row['Description']}**")
-                st.caption(row["Date"].strftime("%d %b %Y"))
-
-            with c2:
-                st.write(f"S$ {row['Amount']:.2f}")
-
-            st.divider()
-
-        
-        if st.button("❌ Clear Filter", key="clear_filter_btn"):
-            del st.session_state["selected_category"]
-            st.rerun()
-
-# ----------------------------
-    # ✅ CATEGORY FILTER VIEW
-    # ----------------------------
-    if "selected_category" in st.session_state:
-        cat = st.session_state.selected_category
-
-        st.subheader(f"📂 {cat} Transactions")
-
-        filtered = m_df[m_df["Category"] == cat].sort_values(by="Date", ascending=False)
-
-        for _, row in filtered.iterrows():
-            c1, c2 = st.columns([6,2])
-
-            with c1:
-                st.write(f"**{row['Description']}**")
-                st.caption(row["Date"].strftime("%d %b %Y"))
-
-            with c2:
-                st.write(f"S$ {row['Amount']:.2f}")
-
-            st.divider()
-
-        if st.button("❌ Clear Filter"):
-            del st.session_state["selected_category"]
-            st.rerun()
 
 # ----------------------------
 # TABS
@@ -346,32 +299,41 @@ if st.session_state.show_edit:
 # HISTORY
 # ----------------------------
 if not st.session_state.master_df.empty:
-    st.subheader("📝 Transaction History")
+    if "selected_category" in st.session_state:
+        st.subheader(f"📝 {st.session_state.selected_category} Transactions")
+    else:
+        st.subheader("📝 All Transactions")
 
     df = st.session_state.master_df.copy()
 
-    # ✅ FORCE consistent datetime
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    # ✅ FILTER LOGIC
+    if "selected_category" in st.session_state:
+        df = df[df["Category"] == st.session_state.selected_category]
 
     # ✅ SORT
     df = df.sort_values(by="Date", ascending=False)
 
-    # ✅ USE POSITION (IMPORTANT FIX)
-    for pos, (idx, row) in enumerate(df.iterrows()):
-        col1, col2, col3 = st.columns([6,2,2])
+    # ✅ EMPTY CASE
+    if df.empty:
+        st.info("No transactions found.")
+    else:
+        for pos, (idx, row) in enumerate(df.iterrows()):
+            col1, col2, col3 = st.columns([6,2,2])
 
-        with col1:
-            st.write(f"**{row['Description']}**")
-            st.caption(f"{row['Category']} • {row['Date'].strftime('%d %b %Y')}")
+            with col1:
+                st.write(f"**{row['Description']}**")
+                st.caption(f"{row['Category']} • {row['Date'].strftime('%d %b %Y')}")
 
-        with col2:
-            st.write(f"S$ {row['Amount']:.2f}")
+            with col2:
+                st.write(f"S$ {row['Amount']:.2f}")
 
-        with col3:
-            # ✅ USE pos for key (not idx)
-            if st.button("✏️ Edit", key=f"edit_{pos}", use_container_width=True):
-                st.session_state.edit_index = idx   # ✅ original index preserved
-                st.session_state.show_edit = True
-                st.rerun()
+            with col3:
+                # ✅ EDIT ALWAYS AVAILABLE
+                if st.button("✏️ Edit", key=f"edit_{pos}", use_container_width=True):
+                    st.session_state.edit_index = idx
+                    st.session_state.show_edit = True
+                    st.rerun()
 
-        st.divider()
+            st.divider()
