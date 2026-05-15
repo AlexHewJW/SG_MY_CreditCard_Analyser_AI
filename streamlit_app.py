@@ -119,7 +119,9 @@ if not st.session_state.master_df.empty:
     df_filter["Year"] = df_filter["Date"].dt.year
     df_filter["Month"] = df_filter["Date"].dt.strftime("%b")
 
-    years = sorted(df_filter["Year"].dropna().unique(), reverse=True)
+    current_year = datetime.now().year
+    years = list(range(1996, current_year + 1))
+    years = sorted(years, reverse=True)
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
     col1, col2 = st.columns(2)
@@ -263,13 +265,21 @@ with tab1:
             descs = work_df["Description"].tolist()
             cats = classify_transactions_batch(descs)
 
+            
+            dates = pd.to_datetime(
+                work_df["Date"] + f" {st.session_state.filter_year}",
+                format="%d %b %Y",
+                errors='coerce'
+            )
+
+
             new_rows = pd.DataFrame({
-                "Date": pd.to_datetime(work_df["Date"] + " 2026", format="%d %b %Y", errors='coerce'),
+                "Date": dates,
                 "Description": descs,
                 "Amount": work_df["Amount"].astype(float), # Ensure float!
                 "Category": cats,
-                "Month": "May",
-                "Year": 2026
+                "Month": dates.dt.strftime("%b"),
+                "Year": dates.dt.year
             }).dropna(subset=["Date"])
 
             # Use ignore_index to prevent duplicate index errors
