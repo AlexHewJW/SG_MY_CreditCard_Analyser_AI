@@ -95,7 +95,6 @@ if uploaded_csv and "csv_loaded" not in st.session_state:
     st.success("✅ Data loaded successfully!")
     st.rerun()
 
-
 # ----------------------------
 # MONTH / YEAR FILTER
 # ----------------------------
