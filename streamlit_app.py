@@ -182,7 +182,6 @@ if not st.session_state.master_df.empty:
             del st.session_state.confirm_reset
             st.rerun()
 
-    
     df = st.session_state.master_df.copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
@@ -236,9 +235,6 @@ tabs = st.tabs(["📂 Upload", "✍️ Manual"])
 
 tab1 = tabs[0]
 tab2 = tabs[1]
-
-# if st.session_state.active_tab == 1:
-#     st.write("### ✍️ Manual Entry")  # helps anchor scroll
 
 # ----------------------------
 # UPLOAD TAB
@@ -305,13 +301,11 @@ with tab1:
             descs = work_df["Description"].tolist()
             cats = classify_transactions_batch(descs)
 
-            
             dates = pd.to_datetime(
                 work_df["Date"] + f" {st.session_state.filter_year}",
                 format="%d %b %Y",
                 errors='coerce'
             )
-
 
             new_rows = pd.DataFrame({
                 "Date": dates,
@@ -321,7 +315,6 @@ with tab1:
                 "Month": dates.dt.strftime("%b"),
                 "Year": dates.dt.year
             }).dropna(subset=["Date"])
-
             
             # ✅ ADD TO MASTER
             if not new_rows.empty:
@@ -333,7 +326,6 @@ with tab1:
                 # ✅ ✅ CRITICAL FIX: Jump to latest date
                 latest_date = new_rows["Date"].max()
                 st.session_state.jump_to_date = latest_date
-
 
             del st.session_state["temp_df"]
             st.session_state.is_processing_pdf = False
@@ -398,7 +390,6 @@ with tab2:
         st.session_state.is_submitting_manual = True
         st.rerun()
 
-
     # ✅ Handle processing safely
     if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
         with st.spinner("Adding transaction..."):
@@ -422,7 +413,6 @@ with tab2:
            
             # ✅ Schedule jump (safe)
             st.session_state.jump_to_date = data["Date"]
-
 
             # ✅ cleanup
             del st.session_state.temp_manual
@@ -529,3 +519,4 @@ if not st.session_state.master_df.empty:
                     st.rerun()
 
             st.divider()
+            
