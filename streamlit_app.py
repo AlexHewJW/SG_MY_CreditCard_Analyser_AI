@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import pdfplumber
-import re
 from ai_logic import classify_transactions_batch
+from data_manager import load_data, save_data
+from pdf_parser import extract_pdf_tables
+from transaction_service import add_transactions, delete_month
 from datetime import datetime
 from telemetry import check_db
 from config import REQUIRED_COLUMNS
@@ -45,56 +46,6 @@ if "show_edit" not in st.session_state:
 if "is_submitting_manual" not in st.session_state:
     st.session_state.is_submitting_manual = False
 
-
-# ----------------------------
-# PDF PARSER
-# ----------------------------
-def extract_pdf_text(file):
-    text = ""
-    with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
-            text += p.extract_text() or ""
-    return text
-
-def extract_pdf_tables(file):
-    text = extract_pdf_text(file)
-    lines = text.split('\n')
-
-    rows = [["Date", "Description", "Amount"]]
-    date_regex = r"^(\d{2}\s[A-Z]{3})\s"
-    current = None
-
-    for line in lines:
-        line = line.strip()
-        m = re.match(date_regex, line)
-
-        if m:
-            if current:
-                rows.append(current)
-
-            nums = re.findall(r"(\d[\d,.]*\.\d{2})", line)
-            date = m.group(1)
-
-            desc = line[len(date):].strip()
-            for n in nums:
-                desc = desc.replace(n, "").strip()
-
-            current = [date, desc, nums[0] if nums else "0.00"]
-            continue
-
-        if current:
-            if len(current[1]) > 150 or any(x in line.upper() for x in ["PAGE", "TOTAL"]):
-                rows.append(current)
-                current = None
-            else:
-                if not re.match(r"^\d{5,}$", line):
-                    current[1] += f" {line}"
-
-    if current:
-        rows.append(current)
-
-    return rows
-
 # ----------------------------
 # DB CHECK
 # ----------------------------
@@ -107,7 +58,7 @@ if "db_ok" not in st.session_state:
 # MASTER DATA
 # ----------------------------
 if "master_df" not in st.session_state:
-    st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
+    st.session_state.master_df = load_data()
 
 st.title("💳 SG Spend Tracker")
 
@@ -136,6 +87,13 @@ if "jump_to_date" in st.session_state:
 
     del st.session_state.jump_to_date
 
+# ✅ DEFAULT INITIAL VALUE (PUT HERE)
+if "filter_year" not in st.session_state:
+    st.session_state.filter_year = datetime.now().year
+
+if "filter_month" not in st.session_state:
+    st.session_state.filter_month = datetime.now().strftime("%b")
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -143,13 +101,6 @@ with col1:
 
 with col2:
     selected_month = st.selectbox("Month", months, key="filter_month")
-
-# ✅ DEFAULT INITIAL VALUE (PUT HERE)
-if "filter_year" not in st.session_state:
-    st.session_state.filter_year = datetime.now().year
-
-if "filter_month" not in st.session_state:
-    st.session_state.filter_month = datetime.now().strftime("%b")
 
 # ----------------------------
 # SUMMARY
@@ -173,14 +124,13 @@ if not st.session_state.master_df.empty:
             df = st.session_state.master_df.copy()
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-            df = df[
-                ~(
-                    (df["Date"].dt.year == st.session_state.filter_year) &
-                    (df["Date"].dt.strftime("%b") == st.session_state.filter_month)
-                )
-            ]
+            st.session_state.master_df = delete_month(
+                st.session_state.master_df,
+                st.session_state.filter_year,
+                st.session_state.filter_month
+            )
 
-            st.session_state.master_df = df.reset_index(drop=True)
+            save_data(st.session_state.master_df)
 
             # clear category filter if exists
             if "selected_category" in st.session_state:
@@ -192,6 +142,10 @@ if not st.session_state.master_df.empty:
         if c2.button("Cancel", use_container_width=True):
             del st.session_state.confirm_reset
             st.rerun()
+
+    
+    df = st.session_state.master_df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
     # ✅ FILTER CURRENT MONTH
     if "filter_year" in st.session_state and "filter_month" in st.session_state:
@@ -326,10 +280,12 @@ with tab1:
             
             # ✅ ADD TO MASTER
             if not new_rows.empty:
-                st.session_state.master_df = pd.concat(
-                    [st.session_state.master_df, new_rows],
-                    ignore_index=True
+                st.session_state.master_df = add_transactions(
+                    st.session_state.master_df,
+                    new_rows
                 )
+
+                save_data(st.session_state.master_df)
 
                 # ✅ ✅ CRITICAL FIX: Jump to latest date
                 latest_date = new_rows["Date"].max()
@@ -413,11 +369,12 @@ with tab2:
                 "Category": [cat]
             })
 
-            st.session_state.master_df = pd.concat(
-                [st.session_state.master_df, new],
-                ignore_index=True
+            st.session_state.master_df = add_transactions(
+                st.session_state.master_df,
+                new
             )
 
+            save_data(st.session_state.master_df)
            
             # ✅ Schedule jump (safe)
             st.session_state.jump_to_date = data["Date"]
@@ -426,7 +383,6 @@ with tab2:
             # ✅ cleanup
             del st.session_state.temp_manual
             st.session_state.is_submitting_manual = False
-
         st.rerun()
 
 # ----------------------------
@@ -441,6 +397,7 @@ if st.session_state.show_edit:
     except (KeyError, IndexError):
         st.error("Transaction no longer exists.")
         st.session_state.show_edit = False
+        save_data(st.session_state.master_df)
         st.rerun()
 
     st.subheader("✏️ Edit Transaction")
@@ -468,11 +425,13 @@ if st.session_state.show_edit:
         
         st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
         st.session_state.show_edit = False
+        save_data(st.session_state.master_df)
         st.rerun()
 
     if c2.button("Delete"):
         st.session_state.master_df = st.session_state.master_df.drop(i).reset_index(drop=True)
         st.session_state.show_edit = False
+        save_data(st.session_state.master_df)
         st.rerun()
 
     if c3.button("Cancel"):
@@ -490,11 +449,10 @@ if not st.session_state.master_df.empty:
     else:
         st.subheader("📝 All Transactions")
 
-    
     df = st.session_state.master_df.copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-    
+    # ✅ APPLY MONTH FILTER
     if "filter_year" in st.session_state and "filter_month" in st.session_state:
         df = df[
             (df["Date"].dt.year == st.session_state.filter_year) &
