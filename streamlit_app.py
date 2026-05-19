@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from ai_logic import classify_transactions_batch
-from data_manager import load_data, save_data
 from pdf_parser import extract_pdf_tables
 from transaction_service import add_transactions, delete_month
 from datetime import datetime
@@ -58,9 +57,44 @@ if "db_ok" not in st.session_state:
 # MASTER DATA
 # ----------------------------
 if "master_df" not in st.session_state:
-    st.session_state.master_df = load_data()
+    st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
 
 st.title("💳 SG Spend Tracker")
+
+st.caption("⚠️ Remember to download your data before closing the app")
+
+# ✅ DOWNLOAD DATA (user saves locally)
+st.download_button(
+    label="⬇️ Save / Backup Data",
+    data=st.session_state.master_df.to_csv(index=False).encode("utf-8"),
+    file_name="transactions.csv",
+    mime="text/csv"
+)
+
+# ✅ LOAD SAVED DATA
+uploaded_csv = st.file_uploader("📂 Load Saved Data", type=["csv"])
+
+if uploaded_csv and "csv_loaded" not in st.session_state:
+    df_loaded = pd.read_csv(uploaded_csv)
+
+    # ✅ Ensure required columns
+    for col in REQUIRED_COLUMNS:
+        if col not in df_loaded.columns:
+            df_loaded[col] = None
+
+    # ✅ Normalize
+    df_loaded["Date"] = pd.to_datetime(df_loaded["Date"], errors="coerce")
+    df_loaded["Month"] = df_loaded["Date"].dt.strftime("%b")
+    df_loaded["Year"] = df_loaded["Date"].dt.year
+    df_loaded["Amount"] = pd.to_numeric(df_loaded["Amount"], errors="coerce").fillna(0)
+
+    st.session_state.master_df = df_loaded.reset_index(drop=True)
+
+    st.session_state.csv_loaded = True   # ✅ prevent loop
+
+    st.success("✅ Data loaded successfully!")
+    st.rerun()
+
 
 # ----------------------------
 # MONTH / YEAR FILTER
@@ -129,8 +163,6 @@ if not st.session_state.master_df.empty:
                 st.session_state.filter_year,
                 st.session_state.filter_month
             )
-
-            save_data(st.session_state.master_df)
 
             # clear category filter if exists
             if "selected_category" in st.session_state:
@@ -285,8 +317,6 @@ with tab1:
                     new_rows
                 )
 
-                save_data(st.session_state.master_df)
-
                 # ✅ ✅ CRITICAL FIX: Jump to latest date
                 latest_date = new_rows["Date"].max()
                 st.session_state.jump_to_date = latest_date
@@ -373,8 +403,6 @@ with tab2:
                 st.session_state.master_df,
                 new
             )
-
-            save_data(st.session_state.master_df)
            
             # ✅ Schedule jump (safe)
             st.session_state.jump_to_date = data["Date"]
@@ -397,7 +425,6 @@ if st.session_state.show_edit:
     except (KeyError, IndexError):
         st.error("Transaction no longer exists.")
         st.session_state.show_edit = False
-        save_data(st.session_state.master_df)
         st.rerun()
 
     st.subheader("✏️ Edit Transaction")
@@ -425,13 +452,11 @@ if st.session_state.show_edit:
         
         st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
         st.session_state.show_edit = False
-        save_data(st.session_state.master_df)
         st.rerun()
 
     if c2.button("Delete"):
         st.session_state.master_df = st.session_state.master_df.drop(i).reset_index(drop=True)
         st.session_state.show_edit = False
-        save_data(st.session_state.master_df)
         st.rerun()
 
     if c3.button("Cancel"):
