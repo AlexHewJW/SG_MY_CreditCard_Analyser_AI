@@ -155,26 +155,58 @@ if "filter_month" not in st.session_state:
 # SUMMARY
 # ----------------------------
 if not st.session_state.master_df.empty:
-    
     m_df = st.session_state.master_df.copy()
     m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
 
-    
+    # ✅ RESET MONTH (top, very visible)
+    col_reset, _ = st.columns([1, 5])
+    with col_reset:
+        if st.button("🧹 Reset This Month", use_container_width=True):
+            st.session_state.confirm_reset = True
+
+    # ✅ CONFIRMATION UI
+    if st.session_state.get("confirm_reset"):
+        st.warning("Confirm delete ALL transactions for this month?")
+        c1, c2 = st.columns(2)
+
+        if c1.button("✅ Yes, delete", use_container_width=True):
+            df = st.session_state.master_df.copy()
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+            df = df[
+                ~(
+                    (df["Date"].dt.year == st.session_state.filter_year) &
+                    (df["Date"].dt.strftime("%b") == st.session_state.filter_month)
+                )
+            ]
+
+            st.session_state.master_df = df.reset_index(drop=True)
+
+            # clear category filter if exists
+            if "selected_category" in st.session_state:
+                del st.session_state["selected_category"]
+
+            del st.session_state.confirm_reset
+            st.rerun()
+
+        if c2.button("Cancel", use_container_width=True):
+            del st.session_state.confirm_reset
+            st.rerun()
+
+    # ✅ FILTER CURRENT MONTH
     if "filter_year" in st.session_state and "filter_month" in st.session_state:
         m_df = m_df[
             (m_df["Date"].dt.year == st.session_state.filter_year) &
             (m_df["Date"].dt.strftime("%b") == st.session_state.filter_month)
         ]
 
-
-
+    # ✅ CLEAN TYPES
     m_df["Amount"] = pd.to_numeric(m_df["Amount"], errors="coerce").fillna(0.0)
-    m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
     m_df = m_df.dropna(subset=["Amount", "Date"])
 
-    col1, col2 = st.columns([1,2])
+    col1, col2 = st.columns([1, 2])
 
-    # ✅ LEFT SIDE (clickable "table rows")
+    # ✅ LEFT SIDE (summary table buttons)
     with col1:
         st.metric("Total Spend", f"S${m_df['Amount'].sum():,.2f}")
 
@@ -182,20 +214,18 @@ if not st.session_state.master_df.empty:
 
         st.subheader("By Category")
 
-        # ✅ Reset Button
         if "selected_category" in st.session_state:
             if st.button("❌ Reset Filter", key="clear_filter_top"):
                 del st.session_state["selected_category"]
                 st.rerun()
 
         for i, row in summary.iterrows():
-            # ✅ Strong alignment using fixed width
             text = f"{row['Category']:<25} S$ {row['Amount']:>10,.2f}"
 
             if st.button(text, key=f"cat_{i}", use_container_width=True):
                 st.session_state.selected_category = row["Category"]
 
-    # ✅ RIGHT SIDE (pie chart)
+    # ✅ RIGHT SIDE (chart)
     with col2:
         if m_df.empty:
             st.info("No data for selected month.")
@@ -203,7 +233,6 @@ if not st.session_state.master_df.empty:
             fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
             fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(fig, use_container_width=True)
-
 
     st.divider()
 
