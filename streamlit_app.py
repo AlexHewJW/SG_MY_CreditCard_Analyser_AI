@@ -127,6 +127,15 @@ years = list(range(1996, current_year + 1))
 years = sorted(years, reverse=True)
 months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
+# ✅ APPLY pending jump BEFORE widgets are created
+if "jump_to_date" in st.session_state:
+    dt = st.session_state.jump_to_date
+
+    st.session_state.filter_year = dt.year
+    st.session_state.filter_month = dt.strftime("%b")
+
+    del st.session_state.jump_to_date
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -369,6 +378,11 @@ with tab2:
                 [st.session_state.master_df, new],
                 ignore_index=True
             )
+
+           
+            # ✅ Schedule jump (safe)
+            st.session_state.jump_to_date = data["Date"]
+
 
             # ✅ cleanup
             del st.session_state.temp_manual
