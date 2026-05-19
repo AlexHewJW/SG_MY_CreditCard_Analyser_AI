@@ -323,8 +323,18 @@ with tab1:
                 "Year": dates.dt.year
             }).dropna(subset=["Date"])
 
-            # Use ignore_index to prevent duplicate index errors
-            st.session_state.master_df = pd.concat([st.session_state.master_df, new_rows], ignore_index=True)
+            
+            # ✅ ADD TO MASTER
+            if not new_rows.empty:
+                st.session_state.master_df = pd.concat(
+                    [st.session_state.master_df, new_rows],
+                    ignore_index=True
+                )
+
+                # ✅ ✅ CRITICAL FIX: Jump to latest date
+                latest_date = new_rows["Date"].max()
+                st.session_state.jump_to_date = latest_date
+
 
             del st.session_state["temp_df"]
             st.session_state.is_processing_pdf = False
