@@ -45,6 +45,11 @@ if "show_edit" not in st.session_state:
 if "is_submitting_manual" not in st.session_state:
     st.session_state.is_submitting_manual = False
 
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = 0  # 0 = Upload, 1 = Manual
+
+if "csv_loaded" not in st.session_state:
+    st.session_state.csv_loaded = False
 # ----------------------------
 # DB CHECK
 # ----------------------------
@@ -74,7 +79,10 @@ st.download_button(
 # ✅ LOAD SAVED DATA
 uploaded_csv = st.file_uploader("📂 Load Saved Data", type=["csv"])
 
-if uploaded_csv and "csv_loaded" not in st.session_state:
+if uploaded_csv is None:
+    st.session_state.csv_loaded = False
+
+if uploaded_csv and not st.session_state.csv_loade:
     df_loaded = pd.read_csv(uploaded_csv)
 
     # ✅ Ensure required columns
@@ -224,7 +232,13 @@ if not st.session_state.master_df.empty:
 # ----------------------------
 # TABS
 # ----------------------------
-tab1, tab2 = st.tabs(["📂 Upload", "✍️ Manual"])
+tabs = st.tabs(["📂 Upload", "✍️ Manual"])
+
+tab1 = tabs[0]
+tab2 = tabs[1]
+
+# if st.session_state.active_tab == 1:
+#     st.write("### ✍️ Manual Entry")  # helps anchor scroll
 
 # ----------------------------
 # UPLOAD TAB
@@ -374,6 +388,8 @@ with tab2:
 
     # ✅ Process AFTER form (important)
     if submit:
+        st.session_state.active_tab = 1  # ✅ stay on manual tab
+
         st.session_state.temp_manual = {
             "Description": d,
             "Amount": a,
@@ -381,6 +397,7 @@ with tab2:
         }
         st.session_state.is_submitting_manual = True
         st.rerun()
+
 
     # ✅ Handle processing safely
     if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
