@@ -11,19 +11,22 @@ from config import REQUIRED_COLUMNS
 st.markdown("""
 <style>
 button {
-    border: 1px solid #e0e0e0 !important;   /* ✅ border added */
+    border: 1px solid #666 !important;
     border-radius: 4px !important;
     text-align: left !important;
     padding: 6px 8px !important;
-    background: white !important;
     width: 100% !important;
     font-family: monospace !important;
-    font-size: 14px;
+    font-size: 14px !important;
+
+    /* ✅ inherit Streamlit theme */
+    background-color: inherit !important;
+    color: inherit !important;
 }
 
 button:hover {
-    background-color: #f5f5f5 !important;
-    border-color: #bdbdbd !important;
+    background-color: rgba(128,128,128,0.15) !important;
+    border-color: #999 !important;
 }
 </style>
 """, unsafe_allow_html=True)
