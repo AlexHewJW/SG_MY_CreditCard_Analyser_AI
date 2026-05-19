@@ -42,6 +42,10 @@ if "is_processing_pdf" not in st.session_state:
 if "show_edit" not in st.session_state:
     st.session_state.show_edit = False
 
+if "is_submitting_manual" not in st.session_state:
+    st.session_state.is_submitting_manual = False
+
+
 # ----------------------------
 # PDF PARSER
 # ----------------------------
@@ -321,25 +325,56 @@ with tab1:
 # MANUAL ENTRY
 # ----------------------------
 with tab2:
+    # ✅ Init state
+    if "is_submitting_manual" not in st.session_state:
+        st.session_state.is_submitting_manual = False
+
     with st.form("manual"):
         d = st.text_input("Merchant")
         a = st.number_input("Amount", min_value=0.0)
         dt = st.date_input("Date")
 
-        if st.form_submit_button("Add"):
-            cat = classify_transactions_batch([d])[0]
+        submit = st.form_submit_button(
+            "⏳ Adding..." if st.session_state.is_submitting_manual else "Add",
+            disabled=st.session_state.is_submitting_manual
+        )
+
+    # ✅ Process AFTER form (important)
+    if submit:
+        st.session_state.temp_manual = {
+            "Description": d,
+            "Amount": a,
+            "Date": dt
+        }
+        st.session_state.is_submitting_manual = True
+        st.rerun()
+
+    # ✅ Handle processing safely
+    if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
+        with st.spinner("Adding transaction..."):
+            data = st.session_state.temp_manual
+
+            cat = classify_transactions_batch([data["Description"]])[0]
 
             new = pd.DataFrame({
-                "Date":[pd.to_datetime(dt)],
-                "Month":[dt.strftime("%b")],
-                "Year":[dt.year],
-                "Description":[d],
-                "Amount":[a],
-                "Category":[cat]
+                "Date": [pd.to_datetime(data["Date"])],
+                "Month": [data["Date"].strftime("%b")],
+                "Year": [data["Date"].year],
+                "Description": [data["Description"]],
+                "Amount": [data["Amount"]],
+                "Category": [cat]
             })
 
-            st.session_state.master_df = pd.concat([st.session_state.master_df,new], ignore_index=True)
-            st.rerun()
+            st.session_state.master_df = pd.concat(
+                [st.session_state.master_df, new],
+                ignore_index=True
+            )
+
+            # ✅ cleanup
+            del st.session_state.temp_manual
+            st.session_state.is_submitting_manual = False
+
+        st.rerun()
 
 # ----------------------------
 # EDIT PAGE
