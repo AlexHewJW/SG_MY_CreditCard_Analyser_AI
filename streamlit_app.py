@@ -85,7 +85,7 @@ uploaded_csv = st.file_uploader("📂 Load Saved Data", type=["csv"])
 if uploaded_csv is None:
     st.session_state.csv_loaded = False
 
-if uploaded_csv and not st.session_state.csv_loade:
+if uploaded_csv and not st.session_state.csv_loaded:
     df_loaded = pd.read_csv(uploaded_csv)
 
     # ✅ Ensure required columns
