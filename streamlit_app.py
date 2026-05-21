@@ -8,44 +8,46 @@ from datetime import datetime
 from telemetry import check_db
 from config import REQUIRED_COLUMNS
 
+st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
+
 st.markdown("""
 <style>
-/* ── Action buttons (category list, edit, etc.) ── */
-div[data-testid="stVerticalBlock"] button,
-div[data-testid="column"] button {
-    border: 1px solid #666 !important;
-    border-radius: 4px !important;
+/* ── Category filter buttons only ── */
+div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] button[kind="secondary"] {
+    border: 1px solid rgba(128,128,128,0.35) !important;
+    border-radius: 6px !important;
     text-align: left !important;
-    padding: 6px 8px !important;
+    padding: 6px 10px !important;
     font-family: monospace !important;
-    font-size: 14px !important;
-    background-color: inherit !important;
+    font-size: 13px !important;
+    background-color: transparent !important;
     color: inherit !important;
+    transition: all 0.15s ease !important;
 }
 
-div[data-testid="stVerticalBlock"] button:hover,
-div[data-testid="column"] button:hover {
-    background-color: rgba(128,128,128,0.15) !important;
-    border-color: #999 !important;
+div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] button[kind="secondary"]:hover {
+    background-color: rgba(255, 75, 75, 0.08) !important;
+    border-color: #ff4b4b !important;
 }
 
-/* ── Tabs: restore native Streamlit tab styling ── */
+/* ── Tabs: restore native look ── */
 div[data-testid="stTabs"] button {
     border: none !important;
     border-bottom: 2px solid transparent !important;
     border-radius: 0 !important;
     text-align: center !important;
-    padding: 8px 16px !important;
+    padding: 8px 20px !important;
     font-family: inherit !important;
-    font-size: 14px !important;
+    font-size: 15px !important;
     font-weight: 500 !important;
     background-color: transparent !important;
     width: auto !important;
+    transition: all 0.15s ease !important;
 }
 
 div[data-testid="stTabs"] button:hover {
-    background-color: rgba(128,128,128,0.08) !important;
-    border-bottom: 2px solid rgba(128,128,128,0.4) !important;
+    background-color: rgba(128,128,128,0.06) !important;
+    border-bottom: 2px solid rgba(128,128,128,0.35) !important;
 }
 
 div[data-testid="stTabs"] button[aria-selected="true"] {
@@ -53,10 +55,29 @@ div[data-testid="stTabs"] button[aria-selected="true"] {
     color: #ff4b4b !important;
     background-color: transparent !important;
 }
+
+/* ── Edit button in transaction list ── */
+button[kind="secondary"]:has(span:contains("✏️")) {
+    border: 1px solid rgba(128,128,128,0.3) !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+}
+
+/* ── Metric label ── */
+div[data-testid="stMetric"] label {
+    font-size: 13px !important;
+    opacity: 0.7;
+}
+
+/* ── Tighten dividers ── */
+hr {
+    margin: 4px 0 !important;
+    opacity: 0.2 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
+DEBUG_MODE = False  # flip to True locally
 
 # ----------------------------
 # STATE INIT
@@ -240,9 +261,7 @@ if not st.session_state.master_df.empty:
                 st.rerun()
 
         for i, row in summary.iterrows():
-            text = f"{row['Category']:<25} S$ {row['Amount']:>10,.2f}"
-
-            if st.button(text, key=f"cat_{i}", use_container_width=True):
+            if st.button(f"{row['Category']}  •  S${row['Amount']:,.2f}", key=f"cat_{i}", use_container_width=True):
                 st.session_state.selected_category = row["Category"]
 
     # ✅ RIGHT SIDE (chart)
@@ -268,49 +287,50 @@ tab2 = tabs[1]
 # UPLOAD TAB
 # ----------------------------
 with tab1:
-    with st.expander("🔧 PDF Parser Debug", expanded=False):
-        debug_file = st.file_uploader("Upload PDF to diagnose", type=["pdf"], key="debug_pdf")
-        if debug_file:
-            import pdfplumber
-            try:
-                with pdfplumber.open(debug_file) as pdf:
-                    st.write(f"**Total pages:** {len(pdf.pages)}")
-                    for i, page in enumerate(pdf.pages):
-                        if i > 3:
-                            st.info("Showing first 4 pages only.")
-                            break
-                        st.markdown(f"---\n**Page {i+1}**")
-                        col_a, col_b, col_c = st.columns(3)
-                        text = page.extract_text() or ""
-                        words = page.extract_words()
-                        chars = page.chars
-                        col_a.metric("extract_text chars", len(text))
-                        col_b.metric("extract_words count", len(words))
-                        col_c.metric("raw chars", len(chars))
-                        if text.strip():
-                            st.text_area(f"Raw text (page {i+1})", text[:1000], height=200)
-                        elif chars:
-                            sample = "".join(c["text"] for c in chars[:200])
-                            st.text_area(f"Raw chars (page {i+1})", sample, height=100)
-                        else:
-                            st.error("No extractable text — PDF may be scanned image (needs OCR)")
-                        if words:
-                            st.write("**First 20 words with positions:**")
-                            st.dataframe(pd.DataFrame(words[:20])[["text","x0","top","x1","bottom"]])
-                        debug_file.seek(0)
-                        try:
-                            from pdf_parser import extract_pdf_tables
-                            debug_file.seek(0)
-                            raw = extract_pdf_tables(debug_file, debug=False)
-                            st.write(f"**Parser output:** {len(raw)-1} rows")
-                            if len(raw) > 1:
-                                st.dataframe(pd.DataFrame(raw[1:], columns=raw[0]))
+    if DEBUG_MODE:
+        with st.expander("🔧 PDF Parser Debug", expanded=False):
+            debug_file = st.file_uploader("Upload PDF to diagnose", type=["pdf"], key="debug_pdf")
+            if debug_file:
+                import pdfplumber
+                try:
+                    with pdfplumber.open(debug_file) as pdf:
+                        st.write(f"**Total pages:** {len(pdf.pages)}")
+                        for i, page in enumerate(pdf.pages):
+                            if i > 3:
+                                st.info("Showing first 4 pages only.")
+                                break
+                            st.markdown(f"---\n**Page {i+1}**")
+                            col_a, col_b, col_c = st.columns(3)
+                            text = page.extract_text() or ""
+                            words = page.extract_words()
+                            chars = page.chars
+                            col_a.metric("extract_text chars", len(text))
+                            col_b.metric("extract_words count", len(words))
+                            col_c.metric("raw chars", len(chars))
+                            if text.strip():
+                                st.text_area(f"Raw text (page {i+1})", text[:1000], height=200)
+                            elif chars:
+                                sample = "".join(c["text"] for c in chars[:200])
+                                st.text_area(f"Raw chars (page {i+1})", sample, height=100)
                             else:
-                                st.warning("Parser returned 0 rows — check pdf_parser.py")
-                        except Exception as parse_err:
-                            st.error(f"Parser error: {parse_err}")
-            except Exception as e:
-                st.error(f"Could not open PDF: {e}")
+                                st.error("No extractable text — PDF may be scanned image (needs OCR)")
+                            if words:
+                                st.write("**First 20 words with positions:**")
+                                st.dataframe(pd.DataFrame(words[:20])[["text","x0","top","x1","bottom"]])
+                            debug_file.seek(0)
+                            try:
+                                from pdf_parser import extract_pdf_tables
+                                debug_file.seek(0)
+                                raw = extract_pdf_tables(debug_file, debug=False)
+                                st.write(f"**Parser output:** {len(raw)-1} rows")
+                                if len(raw) > 1:
+                                    st.dataframe(pd.DataFrame(raw[1:], columns=raw[0]))
+                                else:
+                                    st.warning("Parser returned 0 rows — check pdf_parser.py")
+                            except Exception as parse_err:
+                                st.error(f"Parser error: {parse_err}")
+                except Exception as e:
+                    st.error(f"Could not open PDF: {e}")
 
     uploaded_file = st.file_uploader(
         "Upload Statement",
