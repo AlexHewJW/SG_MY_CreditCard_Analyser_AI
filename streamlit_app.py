@@ -10,23 +10,48 @@ from config import REQUIRED_COLUMNS
 
 st.markdown("""
 <style>
-button {
+/* ── Action buttons (category list, edit, etc.) ── */
+div[data-testid="stVerticalBlock"] button,
+div[data-testid="column"] button {
     border: 1px solid #666 !important;
     border-radius: 4px !important;
     text-align: left !important;
     padding: 6px 8px !important;
-    width: 100% !important;
     font-family: monospace !important;
     font-size: 14px !important;
-
-    /* ✅ inherit Streamlit theme */
     background-color: inherit !important;
     color: inherit !important;
 }
 
-button:hover {
+div[data-testid="stVerticalBlock"] button:hover,
+div[data-testid="column"] button:hover {
     background-color: rgba(128,128,128,0.15) !important;
     border-color: #999 !important;
+}
+
+/* ── Tabs: restore native Streamlit tab styling ── */
+div[data-testid="stTabs"] button {
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    text-align: center !important;
+    padding: 8px 16px !important;
+    font-family: inherit !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    background-color: transparent !important;
+    width: auto !important;
+}
+
+div[data-testid="stTabs"] button:hover {
+    background-color: rgba(128,128,128,0.08) !important;
+    border-bottom: 2px solid rgba(128,128,128,0.4) !important;
+}
+
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    border-bottom: 2px solid #ff4b4b !important;
+    color: #ff4b4b !important;
+    background-color: transparent !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -243,6 +268,50 @@ tab2 = tabs[1]
 # UPLOAD TAB
 # ----------------------------
 with tab1:
+    with st.expander("🔧 PDF Parser Debug", expanded=False):
+        debug_file = st.file_uploader("Upload PDF to diagnose", type=["pdf"], key="debug_pdf")
+        if debug_file:
+            import pdfplumber
+            try:
+                with pdfplumber.open(debug_file) as pdf:
+                    st.write(f"**Total pages:** {len(pdf.pages)}")
+                    for i, page in enumerate(pdf.pages):
+                        if i > 3:
+                            st.info("Showing first 4 pages only.")
+                            break
+                        st.markdown(f"---\n**Page {i+1}**")
+                        col_a, col_b, col_c = st.columns(3)
+                        text = page.extract_text() or ""
+                        words = page.extract_words()
+                        chars = page.chars
+                        col_a.metric("extract_text chars", len(text))
+                        col_b.metric("extract_words count", len(words))
+                        col_c.metric("raw chars", len(chars))
+                        if text.strip():
+                            st.text_area(f"Raw text (page {i+1})", text[:1000], height=200)
+                        elif chars:
+                            sample = "".join(c["text"] for c in chars[:200])
+                            st.text_area(f"Raw chars (page {i+1})", sample, height=100)
+                        else:
+                            st.error("No extractable text — PDF may be scanned image (needs OCR)")
+                        if words:
+                            st.write("**First 20 words with positions:**")
+                            st.dataframe(pd.DataFrame(words[:20])[["text","x0","top","x1","bottom"]])
+                        debug_file.seek(0)
+                        try:
+                            from pdf_parser import extract_pdf_tables
+                            debug_file.seek(0)
+                            raw = extract_pdf_tables(debug_file, debug=False)
+                            st.write(f"**Parser output:** {len(raw)-1} rows")
+                            if len(raw) > 1:
+                                st.dataframe(pd.DataFrame(raw[1:], columns=raw[0]))
+                            else:
+                                st.warning("Parser returned 0 rows — check pdf_parser.py")
+                        except Exception as parse_err:
+                            st.error(f"Parser error: {parse_err}")
+            except Exception as e:
+                st.error(f"Could not open PDF: {e}")
+
     uploaded_file = st.file_uploader(
         "Upload Statement",
         type=["pdf"],
