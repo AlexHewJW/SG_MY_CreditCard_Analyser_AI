@@ -10,6 +10,7 @@ streamlit
 plotly
 psutil
 sqlalchemy
+psycopg[binary]
 psycopg2-binary
 sentencepiece
 
