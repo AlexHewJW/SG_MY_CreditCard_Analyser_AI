@@ -3,7 +3,6 @@ import re
 import datetime
 from statistics import median
 
-
 _NOISE_RE = re.compile(
     r'(?:'
     r'PREVIOUS\s+BALANCE|CREDIT\s+LIMIT|MINIMUM\s+PAYMENT'
@@ -31,17 +30,38 @@ _CITI_RE = re.compile(
     r'^(\d{2})([A-Z]{3})\s+(.+?)\s+([\(\-]?[\d,]+\.\d{2}\)?)$'
 )
 
+# DCS: DD MMM DESCRIPTION AMOUNT or DD/MM/YYYY DESCRIPTION AMOUNT
+_DCS_RE = re.compile(
+    r'^(?P<day>\d{1,2})\s+(?P<mon>[A-Z]{3})\s+(?P<desc>.+?)\s+(?P<amount>[\d,]+\.\d{2})(?:\s+[\d,]+\.\d{2})?$',
+    re.IGNORECASE
+)
+
+_DCS_SLASH_RE = re.compile(
+    r'^(?P<day>\d{1,2})[/-](?P<mon>\d{1,2})[/-](?P<year>\d{2,4})\s+(?P<desc>.+?)\s+(?P<amount>[\d,]+\.\d{2})(?:\s+[\d,]+\.\d{2})?$',
+    re.IGNORECASE
+)
+
+_DCS_DUAL_DATE_RE = re.compile(
+    r'^(?P<date1>\d{4}-\d{2}-\d{2})\s+(?P<date2>\d{4}-\d{2}-\d{2})\s+(?P<desc>.+?)\s+(?P<amount>[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\)))(?:\s*(?:CR|DR))?(?:\s+[\d,]+\.\d{2})?$',
+    re.IGNORECASE
+)
+
 # OCBC continuation lines to skip
 _OCBC_SKIP_RE = re.compile(
     r'^(?:via\s|OTHR|to\s+\d|\d{6,10}$|[A-Za-z0-9]{20,}$)',
     re.IGNORECASE
 )
 
-
 def _clean_amount(raw):
-    s = raw.strip().replace(',', '').replace('$', '').replace(' ', '')
+    if raw is None:
+        return None
+    s = str(raw).strip().upper()
+    s = s.replace('CR', '').replace('DR', '')
+    s = re.sub(r'(?i)^(?:SGD|MYR|USD|AUD|EUR|INR|IDR|RM)\s*', '', s)
+    s = s.replace(',', '').replace('$', '').replace(' ', '')
     negative = s.startswith('(') or s.startswith('-')
-    s = s.strip('()-')
+    s = s.strip('()')
+    s = s.strip('-')
     try:
         val = float(s)
         return -val if negative else val
@@ -51,9 +71,9 @@ def _clean_amount(raw):
 
 def _fmt_date(day, mon, year):
     try:
-        return datetime.datetime.strptime(f"{day} {mon} {year}", "%d %b %Y").strftime("%d %b")
+        return datetime.datetime.strptime(f"{day} {mon} {year}", "%d %b %Y").strftime("%d %b %Y")
     except Exception:
-        return f"{day} {mon}"
+        return f"{day} {mon} {year}"
 
 
 def _get_lines(pdf):
@@ -150,6 +170,75 @@ def _parse_citibank(lines, year):
     return results
 
 
+def _parse_dcs(lines, year):
+    results = []
+
+    for line in lines:
+        if not line.strip() or _NOISE_RE.search(line):
+            continue
+
+        dual_match = _DCS_DUAL_DATE_RE.match(line)
+        if dual_match:
+            date_iso = dual_match.group('date2') or dual_match.group('date1')
+            desc = dual_match.group('desc').strip()
+            amount = _clean_amount(dual_match.group('amount'))
+            if desc and amount is not None:
+                try:
+                    date_obj = datetime.datetime.strptime(date_iso, "%Y-%m-%d")
+                    results.append([date_obj.strftime("%d %b %Y"), re.sub(r'\s+', ' ', desc), f"{abs(amount):.2f}"])
+                except Exception:
+                    pass
+            continue
+
+        date_match = re.match(
+            r'^(?:(?P<day>\d{1,2})\s*(?P<mon>[A-Za-z]{3,9})(?:\s*(?P<year>\d{2,4}))?|(?P<day2>\d{1,2})[/-](?P<mon2>\d{1,2})[/-](?P<year2>\d{2,4}))\s*(?P<rest>.*)$',
+            line,
+            re.IGNORECASE
+        )
+        if not date_match:
+            continue
+
+        rest = date_match.group('rest').strip()
+        amount_match = re.search(
+            r'(?P<amount>[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\)))(?:\s*(?:CR|DR))?(?:\s+[\d,]+\.\d{2})?\s*$',
+            rest,
+            re.IGNORECASE
+        )
+        if not amount_match:
+            continue
+
+        desc = rest[:amount_match.start()].strip()
+        amount = _clean_amount(amount_match.group('amount'))
+        if not desc or amount is None:
+            continue
+
+        try:
+            if date_match.group('day2') is not None:
+                day = int(date_match.group('day2'))
+                mon = int(date_match.group('mon2'))
+                year_value = int(date_match.group('year2'))
+                if year_value < 100:
+                    year_value += 2000 if year_value < 50 else 1900
+                date_str = datetime.datetime.strptime(f"{day} {mon} {year_value}", "%d %m %Y").strftime("%d %b %Y")
+            else:
+                day = int(date_match.group('day'))
+                mon = (date_match.group('mon') or '').upper()
+                year_value = date_match.group('year')
+                if year_value:
+                    year_value = int(year_value)
+                    if year_value < 100:
+                        year_value += 2000 if year_value < 50 else 1900
+                    date_str = datetime.datetime.strptime(f"{day} {mon} {year_value}", "%d %b %Y").strftime("%d %b %Y")
+                else:
+                    date_str = _fmt_date(day, mon, year)
+        except Exception:
+            continue
+
+        results.append([date_str, re.sub(r'\s+', ' ', desc), f"{abs(amount):.2f}"])
+
+    return results
+
+
 def extract_pdf_tables(file, debug=False):
     rows = [["Date", "Description", "Amount"]]
 
@@ -169,6 +258,10 @@ def extract_pdf_tables(file, debug=False):
         if ocbc_rows:
             rows.extend(ocbc_rows)
         else:
-            rows.extend(_parse_citibank(all_lines, year))
+            dcs_rows = _parse_dcs(all_lines, year)
+            if dcs_rows:
+                rows.extend(dcs_rows)
+            else:
+                rows.extend(_parse_citibank(all_lines, year))
 
     return rows

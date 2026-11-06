@@ -340,14 +340,19 @@ with tab1:
 
     if uploaded_file:
         clean = extract_pdf_tables(uploaded_file)
-        df = pd.DataFrame(clean[1:], columns=clean[0])
 
-        df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
-        df = df[df["Amount"] > 0]
-        df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
+        if len(clean) <= 1:
+            st.warning("No transactions were parsed from this PDF. Try the PDF debug panel or check the statement layout.")
+        else:
+            df = pd.DataFrame(clean[1:], columns=clean[0])
+            df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+            df = df.dropna(subset=["Amount"]).copy()
+            df["Amount"] = df["Amount"].abs()
+            df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
 
-        # ✅ store preview so deletion persists
-        if "preview_df" not in st.session_state:
+            if "preview_df" in st.session_state:
+                del st.session_state.preview_df
+
             st.session_state.preview_df = df.reset_index(drop=True)
 
     # ✅ render preview with delete buttons
@@ -393,11 +398,24 @@ with tab1:
             descs = work_df["Description"].tolist()
             cats = classify_transactions_batch(descs)
 
-            dates = pd.to_datetime(
-                work_df["Date"] + f" {st.session_state.filter_year}",
-                format="%d %b %Y",
-                errors='coerce'
-            )
+            def normalize_date(value, fallback_year):
+                if pd.isna(value):
+                    return pd.NaT
+                s = str(value).strip()
+                for fmt in ["%d %b %Y", "%d %b", "%d/%m/%Y", "%d/%m"]:
+                    try:
+                        return pd.to_datetime(s, format=fmt)
+                    except Exception:
+                        pass
+                try:
+                    return pd.to_datetime(s + f" {fallback_year}", format="%d %b %Y")
+                except Exception:
+                    try:
+                        return pd.to_datetime(s + f" {fallback_year}", format="%d/%m/%Y")
+                    except Exception:
+                        return pd.NaT
+
+            dates = work_df["Date"].apply(lambda x: normalize_date(x, st.session_state.filter_year))
 
             new_rows = pd.DataFrame({
                 "Date": dates,
