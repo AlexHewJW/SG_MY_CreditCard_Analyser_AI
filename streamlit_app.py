@@ -223,13 +223,19 @@ monthly_overview = pd.DataFrame({
     "Total spend": [f"S${monthly_totals.loc[month, 'Total']:,.2f}" for month in months],
     "Transactions": [int(monthly_totals.loc[month, "Transactions"]) for month in months],
 })
-st.dataframe(monthly_overview, hide_index=True)
-
-selected_month = st.selectbox(
-    "Month",
-    months,
-    key="filter_month",
+st.caption("Select a month row to view its transactions.")
+monthly_selection = st.dataframe(
+    monthly_overview,
+    hide_index=True,
+    key=f"monthly_overview_{selected_year}",
+    on_select="rerun",
+    selection_mode="single-row",
+    height=470,
+    alt=f"Monthly spending and transaction counts for {selected_year}",
 )
+selected_rows = monthly_selection.selection.rows
+if selected_rows:
+    st.session_state.filter_month = months[selected_rows[0]]
 
 # ----------------------------
 # SUMMARY
