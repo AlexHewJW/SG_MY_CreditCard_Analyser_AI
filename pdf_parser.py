@@ -59,6 +59,12 @@ _DCS_SLASH_RE = re.compile(
     re.IGNORECASE
 )
 
+_DCS_DUAL_MONTH_DATE_RE = re.compile(
+    r'^(?P<day1>\d{1,2})\s+(?P<mon1>[A-Za-z]{3})\s+'
+    r'(?P<day2>\d{1,2})\s+(?P<mon2>[A-Za-z]{3})\s+(?P<rest>.+)$',
+    re.IGNORECASE
+)
+
 _DCS_DUAL_DATE_RE = re.compile(
     r'^(?P<date1>\d{4}-\d{2}-\d{2})\s+(?P<date2>\d{4}-\d{2}-\d{2})\s+(?P<desc>.+?)\s+(?P<amount>[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\)))(?:\s*(?:CR|DR))?(?:\s+[\d,]+\.\d{2})?$',
     re.IGNORECASE
@@ -200,6 +206,26 @@ def _parse_dcs(lines, year):
     for line in lines:
         if not line.strip() or _NOISE_RE.search(line):
             continue
+
+        dual_month_match = _DCS_DUAL_MONTH_DATE_RE.match(line)
+        if dual_month_match:
+            rest = dual_month_match.group('rest').strip()
+            amount_match = re.search(
+                r'(?P<amount>[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\)))(?:\s*(?:CR|DR))?(?:\s+[\d,]+\.\d{2})?\s*$',
+                rest,
+                re.IGNORECASE
+            )
+            if amount_match:
+                desc = rest[:amount_match.start()].strip()
+                amount = _clean_amount(amount_match.group('amount'))
+                if desc and amount is not None:
+                    date_str = _fmt_date(
+                        dual_month_match.group('day1'),
+                        dual_month_match.group('mon1'),
+                        year
+                    )
+                    results.append([date_str, re.sub(r'\s+', ' ', desc), f"{abs(amount):.2f}"])
+                    continue
 
         dual_match = _DCS_DUAL_DATE_RE.match(line)
         if dual_match:
