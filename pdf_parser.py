@@ -94,6 +94,12 @@ def _fmt_date(day, mon, year):
         return f"{day} {mon} {year}"
 
 
+def _resolve_transaction_year(transaction_year, statement_year):
+    if abs(transaction_year - statement_year) > 1:
+        return statement_year
+    return transaction_year
+
+
 def _get_lines(pdf):
     """Get all lines across all pages using extract_text() first, fallback to word grouping."""
     lines = []
@@ -237,6 +243,7 @@ def _parse_dcs(lines, year):
                 year_value = int(date_match.group('year2'))
                 if year_value < 100:
                     year_value += 2000 if year_value < 50 else 1900
+                year_value = _resolve_transaction_year(year_value, year)
                 date_str = datetime.datetime.strptime(f"{day} {mon} {year_value}", "%d %m %Y").strftime("%d %b %Y")
             else:
                 day = int(date_match.group('day'))
@@ -246,6 +253,7 @@ def _parse_dcs(lines, year):
                     year_value = int(year_value)
                     if year_value < 100:
                         year_value += 2000 if year_value < 50 else 1900
+                    year_value = _resolve_transaction_year(year_value, year)
                     date_str = datetime.datetime.strptime(f"{day} {mon} {year_value}", "%d %b %Y").strftime("%d %b %Y")
                 else:
                     date_str = _fmt_date(day, mon, year)
