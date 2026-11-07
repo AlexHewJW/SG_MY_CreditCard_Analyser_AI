@@ -1,7 +1,23 @@
 import pdfplumber
 import re
 import datetime
+import tempfile
 from statistics import median
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover
+    np = None
+
+try:
+    import pypdfium2 as pdfium
+except Exception:  # pragma: no cover
+    pdfium = None
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except Exception:  # pragma: no cover
+    RapidOCR = None
 
 _NOISE_RE = re.compile(
     r'(?:'
@@ -15,7 +31,9 @@ _NOISE_RE = re.compile(
     r'|^Transaction\s+Date|^Value\s+Date|^Cheque\b|^Withdrawal\b|^Deposit\b'
     r'|BALANCE\s+B/?F|STATEMENT\s+OF\s+ACCOUNT|For\s+enquiries'
     r'|Customer\s+Service|OCBC\s+Centre|Account\s+No'
-    r'|^360\s+ACCOUNT|^[A-Z0-9]{15,}$'
+    r'|PREVIOUS\s+STATEMENT\s+BALANCE|AVAILABLE\s+CREDIT|CREDIT\s+LIMIT'
+    r'|PURCHASE\s*&\s*DEBITS|GST\s+REVERSALS|Purchase\s*\$?'
+    r'|^360\s+ACCOUNT'
     r')',
     re.IGNORECASE
 )
@@ -239,6 +257,154 @@ def _parse_dcs(lines, year):
     return results
 
 
+def _parse_hsbc_rows_from_ocr(result, year):
+    rows = []
+    page_clusters = {}
+
+    for item in result or []:
+        if not item or len(item) < 3:
+            continue
+        page_index, box, text, _score = item
+        if not text or not re.search(r'[A-Za-z0-9]', text):
+            continue
+        coords = [coord for point in box for coord in point]
+        x0 = min(coords[0::2])
+        x1 = max(coords[0::2])
+        y0 = min(coords[1::2])
+        y1 = max(coords[1::2])
+        cy = (y0 + y1) / 2
+
+        page_clusters.setdefault(page_index, [])
+        placed = False
+        for cluster in page_clusters[page_index]:
+            if abs(cy - cluster['cy']) <= 18:
+                cluster['items'].append({
+                    'text': re.sub(r'\s+', ' ', str(text)).strip(),
+                    'x0': x0,
+                    'x1': x1,
+                    'cy': cy,
+                })
+                cluster['cy'] = sum(item_data['cy'] for item_data in cluster['items']) / len(cluster['items'])
+                placed = True
+                break
+
+        if not placed:
+            page_clusters[page_index].append({'cy': cy, 'items': [{
+                'text': re.sub(r'\s+', ' ', str(text)).strip(),
+                'x0': x0,
+                'x1': x1,
+                'cy': cy,
+            }]})
+
+    for page_index in sorted(page_clusters):
+        for cluster in sorted(page_clusters[page_index], key=lambda c: c['cy']):
+            ordered = sorted(cluster['items'], key=lambda item: item['x0'])
+            if len(ordered) < 3:
+                continue
+
+            date_tokens = []
+            desc_parts = []
+            amount_text = ''
+
+            for item in ordered:
+                text = item['text']
+                if not text:
+                    continue
+                if item['x1'] < 260 and re.match(r'^\d{1,2}\s+[A-Za-z]{3,9}$', text, re.IGNORECASE):
+                    date_tokens.append(text)
+                elif item['x0'] < 260 and item['x1'] < 310 and re.match(r'^\d{1,2}\s+[A-Za-z]{3,9}$', text, re.IGNORECASE):
+                    date_tokens.append(text)
+                elif 260 <= item['x0'] < 650:
+                    desc_parts.append(text)
+                elif 650 <= item['x0'] <= 760:
+                    amount_text = text
+
+            if not date_tokens or not amount_text:
+                continue
+
+            if not re.fullmatch(r'[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))', amount_text.strip(), re.IGNORECASE):
+                continue
+
+            amount = _clean_amount(amount_text)
+            if amount is None:
+                continue
+
+            desc = ' '.join(desc_parts).strip()
+            if not desc or len(desc) > 100 or _NOISE_RE.search(desc):
+                continue
+
+            date_text = date_tokens[0]
+            m = re.match(r'^(?P<day>\d{1,2})\s*(?P<mon>[A-Za-z]{3,9})$', date_text, re.IGNORECASE)
+            if not m:
+                continue
+
+            try:
+                date_str = datetime.datetime.strptime(f"{m.group('day')} {m.group('mon')} {year}", "%d %b %Y").strftime("%d %b %Y")
+            except Exception:
+                continue
+
+            desc = re.sub(r'\s+', ' ', desc).strip()
+            if not desc:
+                continue
+
+            rows.append([date_str, desc, f"{abs(amount):.2f}"])
+
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = (row[0], re.sub(r'\s+', ' ', row[1]).strip().upper(), row[2])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _extract_ocr_lines(file):
+    if pdfium is None or RapidOCR is None or np is None:
+        return []
+
+    try:
+        file.seek(0)
+        data = file.read()
+        if not data:
+            return []
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
+            temp_pdf.write(data)
+            temp_path = temp_pdf.name
+
+        pdf = pdfium.PdfDocument(temp_path)
+        ocr = RapidOCR()
+        rows = []
+        for page_index in range(len(pdf)):
+            page = pdf[page_index]
+            bitmap = page.render(scale=2)
+            image = np.asarray(bitmap.to_pil())
+            result, _ = ocr(image)
+            if not result:
+                continue
+            texts = [item[1].upper() for item in result if isinstance(item[1], str)]
+            has_table_header = any('AMOUNT' in text and 'DATE' in text for text in texts) or any('AMOUNT(SGD)' in text for text in texts)
+            if has_table_header:
+                rows.extend([(page_index, box, text, score) for box, text, score in result])
+        if not rows:
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                bitmap = page.render(scale=2)
+                image = np.asarray(bitmap.to_pil())
+                result, _ = ocr(image)
+                if result:
+                    rows.extend([(page_index, box, text, score) for box, text, score in result])
+        return rows
+    except Exception:
+        return []
+    finally:
+        try:
+            file.seek(0)
+        except Exception:
+            pass
+
+
 def extract_pdf_tables(file, debug=False):
     rows = [["Date", "Description", "Amount"]]
 
@@ -262,6 +428,10 @@ def extract_pdf_tables(file, debug=False):
             if dcs_rows:
                 rows.extend(dcs_rows)
             else:
-                rows.extend(_parse_citibank(all_lines, year))
+                ocr_rows = _parse_hsbc_rows_from_ocr(_extract_ocr_lines(file), year)
+                if ocr_rows:
+                    rows.extend(ocr_rows)
+                else:
+                    rows.extend(_parse_citibank(all_lines, year))
 
     return rows

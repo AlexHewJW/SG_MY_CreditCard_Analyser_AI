@@ -14,7 +14,9 @@ psycopg[binary]
 psycopg2-binary
 sentencepiece
 
-# PDF bank statement support (DBS / OCBC / UOB)
+# PDF bank statement support (DBS / OCBC / UOB / HSBC scanned statements)
 pdfplumber>=0.10
 pdfminer.six>=20221105
 Pillow>=10.0
+pypdfium2>=4.30.0
+rapidocr-onnxruntime>=1.2.3
