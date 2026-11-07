@@ -5,8 +5,8 @@ from datetime import datetime
 # Get the URL from Streamlit Secrets
 DB_URL = st.secrets["database"]["url"]
 
-# Create a connection engine
-engine = create_engine(DB_URL)
+# Avoid prepared-statement name collisions with transaction-pooled connections.
+engine = create_engine(DB_URL, connect_args={"prepare_threshold": None})
 
 def check_db():
     """Initializes the table if it doesn't exist."""
