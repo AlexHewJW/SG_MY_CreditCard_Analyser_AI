@@ -80,6 +80,7 @@ hr {
 
 DEBUG_MODE = False  # flip to True locally
 
+
 # ----------------------------
 # STATE INIT
 # ----------------------------
@@ -118,40 +119,46 @@ st.title("💳 SG Spend Tracker")
 
 st.caption("⚠️ Remember to download your data before closing the app")
 
-# ✅ DOWNLOAD DATA (user saves locally)
-st.download_button(
-    label="⬇️ Save / Backup Data",
-    data=st.session_state.master_df.to_csv(index=False).encode("utf-8"),
-    file_name="transactions.csv",
-    mime="text/csv"
+st.subheader("Import a statement")
+uploaded_file = st.file_uploader(
+    "Upload credit card statement (PDF)",
+    type=["pdf"],
+    key=f"pdf_{st.session_state.uploader_key}"
 )
 
-# ✅ LOAD SAVED DATA
-uploaded_csv = st.file_uploader("📂 Load Saved Data", type=["csv"])
+with st.expander("Backup and restore data", expanded=False):
+    st.download_button(
+        label="Save backup data",
+        data=st.session_state.master_df.to_csv(index=False).encode("utf-8"),
+        file_name="transactions.csv",
+        mime="text/csv"
+    )
 
-if uploaded_csv is None:
-    st.session_state.csv_loaded = False
+    uploaded_csv = st.file_uploader("Load saved transaction data", type=["csv"])
 
-if uploaded_csv and not st.session_state.csv_loaded:
-    df_loaded = pd.read_csv(uploaded_csv)
+    if uploaded_csv is None:
+        st.session_state.csv_loaded = False
 
-    # ✅ Ensure required columns
-    for col in REQUIRED_COLUMNS:
-        if col not in df_loaded.columns:
-            df_loaded[col] = None
+    if uploaded_csv and not st.session_state.csv_loaded:
+        df_loaded = pd.read_csv(uploaded_csv)
 
-    # ✅ Normalize
-    df_loaded["Date"] = pd.to_datetime(df_loaded["Date"], errors="coerce")
-    df_loaded["Month"] = df_loaded["Date"].dt.strftime("%b")
-    df_loaded["Year"] = df_loaded["Date"].dt.year
-    df_loaded["Amount"] = pd.to_numeric(df_loaded["Amount"], errors="coerce").fillna(0)
+        # Ensure required columns
+        for col in REQUIRED_COLUMNS:
+            if col not in df_loaded.columns:
+                df_loaded[col] = None
 
-    st.session_state.master_df = df_loaded.reset_index(drop=True)
+        # Normalize
+        df_loaded["Date"] = pd.to_datetime(df_loaded["Date"], errors="coerce")
+        df_loaded["Month"] = df_loaded["Date"].dt.strftime("%b")
+        df_loaded["Year"] = df_loaded["Date"].dt.year
+        df_loaded["Amount"] = pd.to_numeric(df_loaded["Amount"], errors="coerce").fillna(0)
 
-    st.session_state.csv_loaded = True   # ✅ prevent loop
+        st.session_state.master_df = df_loaded.reset_index(drop=True)
 
-    st.success("✅ Data loaded successfully!")
-    st.rerun()
+        st.session_state.csv_loaded = True
+
+        st.success("Saved data loaded successfully.")
+        st.rerun()
 
 # ----------------------------
 # MONTH / YEAR FILTER
@@ -169,7 +176,21 @@ years = list(range(1996, current_year + 1))
 years = sorted(years, reverse=True)
 months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
+# Preserve the last month selected by the previous revision-keyed dropdown.
+if "month_filter_revision" in st.session_state:
+    legacy_month_key = f"filter_month_{st.session_state.month_filter_revision}"
+    if legacy_month_key in st.session_state:
+        st.session_state.filter_month = st.session_state[legacy_month_key]
+        del st.session_state[legacy_month_key]
+    del st.session_state.month_filter_revision
+
 # ✅ APPLY pending jump BEFORE widgets are created
+if "reset_month_view" in st.session_state:
+    reset_year, reset_month = st.session_state.reset_month_view
+    st.session_state.filter_year = reset_year
+    st.session_state.filter_month = reset_month
+    del st.session_state.reset_month_view
+
 if "jump_to_date" in st.session_state:
     dt = st.session_state.jump_to_date
 
@@ -185,13 +206,30 @@ if "filter_year" not in st.session_state:
 if "filter_month" not in st.session_state:
     st.session_state.filter_month = datetime.now().strftime("%b")
 
-col1, col2 = st.columns(2)
+selected_year = st.selectbox("Year", years, key="filter_year")
 
-with col1:
-    selected_year = st.selectbox("Year", years, key="filter_year")
+year_df = df_filter[df_filter["Year"] == selected_year].copy()
+year_df["Amount"] = pd.to_numeric(year_df["Amount"], errors="coerce").fillna(0.0)
+monthly_totals = (
+    year_df.assign(Month=year_df["Date"].dt.strftime("%b"))
+    .groupby("Month")["Amount"]
+    .agg(Total="sum", Transactions="count")
+    .reindex(months, fill_value=0)
+)
 
-with col2:
-    selected_month = st.selectbox("Month", months, key="filter_month")
+st.subheader(f"Spending by month · {selected_year}")
+monthly_overview = pd.DataFrame({
+    "Month": months,
+    "Total spend": [f"S${monthly_totals.loc[month, 'Total']:,.2f}" for month in months],
+    "Transactions": [int(monthly_totals.loc[month, "Transactions"]) for month in months],
+})
+st.dataframe(monthly_overview, hide_index=True)
+
+selected_month = st.selectbox(
+    "Month",
+    months,
+    key="filter_month",
+)
 
 # ----------------------------
 # SUMMARY
@@ -214,13 +252,16 @@ if not st.session_state.master_df.empty:
         if c1.button("✅ Yes, delete", use_container_width=True):
             df = st.session_state.master_df.copy()
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            st.session_state.reset_month_view = (
+                st.session_state.filter_year,
+                st.session_state.filter_month,
+            )
 
             st.session_state.master_df = delete_month(
                 st.session_state.master_df,
                 st.session_state.filter_year,
                 st.session_state.filter_month
             )
-
             # clear category filter if exists
             if "selected_category" in st.session_state:
                 del st.session_state["selected_category"]
@@ -332,12 +373,6 @@ with tab1:
                                 st.error(f"Parser error: {parse_err}")
                 except Exception as e:
                     st.error(f"Could not open PDF: {e}")
-
-    uploaded_file = st.file_uploader(
-        "Upload Statement",
-        type=["pdf"],
-        key=f"pdf_{st.session_state.uploader_key}"
-    )
 
     if uploaded_file:
         upload_fingerprint = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
