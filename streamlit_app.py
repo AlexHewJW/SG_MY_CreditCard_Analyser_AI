@@ -1,3 +1,4 @@
+import hashlib
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -339,21 +340,29 @@ with tab1:
     )
 
     if uploaded_file:
-        clean = extract_pdf_tables(uploaded_file)
+        upload_fingerprint = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
+        if st.session_state.get("parsed_pdf_fingerprint") != upload_fingerprint:
+            clean = extract_pdf_tables(uploaded_file)
+            st.session_state.parsed_pdf_fingerprint = upload_fingerprint
 
-        if len(clean) <= 1:
+            if len(clean) <= 1:
+                st.session_state.preview_df = pd.DataFrame(columns=["Date", "Description", "Amount"])
+                st.session_state.pdf_parse_failed = True
+            else:
+                df = pd.DataFrame(clean[1:], columns=clean[0])
+                df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+                df = df.dropna(subset=["Amount"]).copy()
+                df["Amount"] = df["Amount"].abs()
+                df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
+                st.session_state.preview_df = df.reset_index(drop=True)
+                st.session_state.pdf_parse_failed = False
+
+        if st.session_state.get("pdf_parse_failed"):
             st.warning("No transactions were parsed from this PDF. Try the PDF debug panel or check the statement layout.")
-        else:
-            df = pd.DataFrame(clean[1:], columns=clean[0])
-            df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
-            df = df.dropna(subset=["Amount"]).copy()
-            df["Amount"] = df["Amount"].abs()
-            df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
-
-            if "preview_df" in st.session_state:
-                del st.session_state.preview_df
-
-            st.session_state.preview_df = df.reset_index(drop=True)
+    else:
+        for state_key in ("parsed_pdf_fingerprint", "preview_df", "pdf_parse_failed"):
+            if state_key in st.session_state:
+                del st.session_state[state_key]
 
     # ✅ render preview with delete buttons
     if "preview_df" in st.session_state and not st.session_state.preview_df.empty:
@@ -441,8 +450,9 @@ with tab1:
             st.session_state.is_processing_pdf = False
             st.session_state.uploader_key += 1
 
-            if "preview_df" in st.session_state:
-                del st.session_state.preview_df
+            for state_key in ("preview_df", "parsed_pdf_fingerprint", "pdf_parse_failed"):
+                if state_key in st.session_state:
+                    del st.session_state[state_key]
 
             st.rerun()
 
@@ -456,7 +466,7 @@ with tab1:
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("🚀 Add to Master Tracker", use_container_width=True):
+            if "preview_df" in st.session_state and not st.session_state.preview_df.empty and st.button("🚀 Add to Master Tracker", use_container_width=True):
                 st.session_state.temp_df = df.copy()
                 st.session_state.is_processing_pdf = True
                 st.rerun()
@@ -466,6 +476,9 @@ with tab1:
                 # ✅ clear preview and reset uploader
                 if "preview_df" in st.session_state:
                     del st.session_state.preview_df
+                for state_key in ("parsed_pdf_fingerprint", "pdf_parse_failed"):
+                    if state_key in st.session_state:
+                        del st.session_state[state_key]
 
                 st.session_state.uploader_key += 1  # reset file uploader
                 st.rerun()
