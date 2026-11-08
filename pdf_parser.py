@@ -295,6 +295,19 @@ def _parse_hsbc_rows_from_ocr(result, year):
     rows = []
     page_clusters = {}
 
+    def _pick_date_token(left_tokens):
+        for token in reversed(left_tokens):
+            match = re.match(r'^(?P<day>\d{1,2})\s*(?P<mon>[A-Za-z]{3,9})$', token, re.IGNORECASE)
+            if match:
+                return token
+
+        for token in reversed(left_tokens):
+            match = re.search(r'(?P<day>\d{1,2})\s+(?P<mon>[A-Za-z]{3,9})', token, re.IGNORECASE)
+            if match:
+                return f"{match.group('day')} {match.group('mon')}"
+
+        return None
+
     for item in result or []:
         if not item or len(item) < 3:
             continue
@@ -344,9 +357,7 @@ def _parse_hsbc_rows_from_ocr(result, year):
                 text = item['text']
                 if not text:
                     continue
-                if item['x1'] < 260 and re.match(r'^\d{1,2}\s+[A-Za-z]{3,9}$', text, re.IGNORECASE):
-                    date_tokens.append(text)
-                elif item['x0'] < 260 and item['x1'] < 310 and re.match(r'^\d{1,2}\s+[A-Za-z]{3,9}$', text, re.IGNORECASE):
+                if item['x0'] < 260:
                     date_tokens.append(text)
                 elif 260 <= item['x0'] < 650:
                     desc_parts.append(text)
@@ -367,31 +378,33 @@ def _parse_hsbc_rows_from_ocr(result, year):
             if not desc or len(desc) > 100 or _NOISE_RE.search(desc):
                 continue
 
-            date_text = date_tokens[0]
+            desc = re.sub(r'\s+', ' ', desc).strip()
+            if re.fullmatch(r'[\d,]+(?:\.\d{2})?(?:CR|DR)?', desc, re.IGNORECASE):
+                continue
+            if re.fullmatch(r'[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))', desc, re.IGNORECASE):
+                continue
+
+            date_text = _pick_date_token(date_tokens)
+            if not date_text:
+                continue
+
             m = re.match(r'^(?P<day>\d{1,2})\s*(?P<mon>[A-Za-z]{3,9})$', date_text, re.IGNORECASE)
             if not m:
-                continue
+                m = re.search(r'(?P<day>\d{1,2})\s+(?P<mon>[A-Za-z]{3,9})', date_text, re.IGNORECASE)
+                if not m:
+                    continue
 
             try:
                 date_str = datetime.datetime.strptime(f"{m.group('day')} {m.group('mon')} {year}", "%d %b %Y").strftime("%d %b %Y")
             except Exception:
                 continue
 
-            desc = re.sub(r'\s+', ' ', desc).strip()
             if not desc:
                 continue
 
             rows.append([date_str, desc, f"{abs(amount):.2f}"])
 
-    seen = set()
-    deduped = []
-    for row in rows:
-        key = (row[0], re.sub(r'\s+', ' ', row[1]).strip().upper(), row[2])
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(row)
-    return deduped
+    return rows
 
 
 def _extract_ocr_lines(file):
