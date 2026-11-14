@@ -2,23 +2,29 @@ import pdfplumber
 import re
 import datetime
 import tempfile
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from statistics import median
 
+_OCR_IMPORT_ERRORS = {}
+
 try:
     import numpy as np
-except Exception:  # pragma: no cover
+except Exception as exc:  # pragma: no cover
     np = None
+    _OCR_IMPORT_ERRORS["numpy"] = f"{type(exc).__name__}: {str(exc)[:240]}"
 
 try:
     import pypdfium2 as pdfium
-except Exception:  # pragma: no cover
+except Exception as exc:  # pragma: no cover
     pdfium = None
+    _OCR_IMPORT_ERRORS["pypdfium2"] = f"{type(exc).__name__}: {str(exc)[:240]}"
 
 try:
     from rapidocr_onnxruntime import RapidOCR
-except Exception:  # pragma: no cover
+except Exception as exc:  # pragma: no cover
     RapidOCR = None
+    _OCR_IMPORT_ERRORS["rapidocr-onnxruntime"] = f"{type(exc).__name__}: {str(exc)[:240]}"
 
 _NOISE_RE = re.compile(
     r'(?:'
@@ -412,6 +418,7 @@ def _extract_ocr_lines(file, diagnostics=None):
     if diagnostics is not None:
         diagnostics.update({
             "available": all(module is not None for module in (pdfium, RapidOCR, np)),
+            "import_errors": dict(_OCR_IMPORT_ERRORS),
             "missing_dependencies": [
                 name for name, module in (
                     ("pypdfium2", pdfium),
@@ -504,6 +511,7 @@ def extract_pdf_tables(file, debug=False, diagnostics=None):
                 package_versions[package] = "not installed"
         diagnostics.update({
             "package_versions": package_versions,
+            "python_version": sys.version.split()[0],
             "pdf_pages": 0,
             "text_characters_by_page": [],
             "parser_route": None,
