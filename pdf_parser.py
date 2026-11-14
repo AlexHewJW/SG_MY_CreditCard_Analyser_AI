@@ -2,6 +2,7 @@ import pdfplumber
 import re
 import datetime
 import tempfile
+from importlib.metadata import PackageNotFoundError, version
 from statistics import median
 
 try:
@@ -407,8 +408,28 @@ def _parse_hsbc_rows_from_ocr(result, year):
     return rows
 
 
-def _extract_ocr_lines(file):
+def _extract_ocr_lines(file, diagnostics=None):
+    if diagnostics is not None:
+        diagnostics.update({
+            "available": all(module is not None for module in (pdfium, RapidOCR, np)),
+            "missing_dependencies": [
+                name for name, module in (
+                    ("pypdfium2", pdfium),
+                    ("rapidocr-onnxruntime", RapidOCR),
+                    ("numpy", np),
+                ) if module is None
+            ],
+            "pages": 0,
+            "detections_by_page": [],
+            "header_pages": [],
+            "fallback_pass_used": False,
+            "ocr_rows_collected": 0,
+            "error": None,
+        })
+
     if pdfium is None or RapidOCR is None or np is None:
+        if diagnostics is not None:
+            diagnostics["error"] = "Required OCR dependencies are unavailable."
         return []
 
     try:
@@ -421,29 +442,48 @@ def _extract_ocr_lines(file):
             temp_path = temp_pdf.name
 
         pdf = pdfium.PdfDocument(temp_path)
+        if diagnostics is not None:
+            diagnostics["pages"] = len(pdf)
         ocr = RapidOCR()
         rows = []
+        detection_counts = []
+        header_pages = []
         for page_index in range(len(pdf)):
             page = pdf[page_index]
             bitmap = page.render(scale=2)
             image = np.asarray(bitmap.to_pil())
             result, _ = ocr(image)
+            detection_counts.append(len(result) if result else 0)
             if not result:
                 continue
             texts = [item[1].upper() for item in result if isinstance(item[1], str)]
             has_table_header = any('AMOUNT' in text and 'DATE' in text for text in texts) or any('AMOUNT(SGD)' in text for text in texts)
             if has_table_header:
+                header_pages.append(page_index + 1)
                 rows.extend([(page_index, box, text, score) for box, text, score in result])
+        if diagnostics is not None:
+            diagnostics["detections_by_page"] = detection_counts
+            diagnostics["header_pages"] = header_pages
         if not rows:
+            if diagnostics is not None:
+                diagnostics["fallback_pass_used"] = True
+            fallback_counts = []
             for page_index in range(len(pdf)):
                 page = pdf[page_index]
                 bitmap = page.render(scale=2)
                 image = np.asarray(bitmap.to_pil())
                 result, _ = ocr(image)
+                fallback_counts.append(len(result) if result else 0)
                 if result:
                     rows.extend([(page_index, box, text, score) for box, text, score in result])
+            if diagnostics is not None:
+                diagnostics["fallback_detections_by_page"] = fallback_counts
+        if diagnostics is not None:
+            diagnostics["ocr_rows_collected"] = len(rows)
         return rows
-    except Exception:
+    except Exception as exc:
+        if diagnostics is not None:
+            diagnostics["error"] = type(exc).__name__
         return []
     finally:
         try:
@@ -452,10 +492,30 @@ def _extract_ocr_lines(file):
             pass
 
 
-def extract_pdf_tables(file, debug=False):
+def extract_pdf_tables(file, debug=False, diagnostics=None):
     rows = [["Date", "Description", "Amount"]]
+    if diagnostics is not None:
+        diagnostics.clear()
+        package_versions = {}
+        for package in ("pdfplumber", "pypdfium2", "rapidocr-onnxruntime", "onnxruntime", "numpy"):
+            try:
+                package_versions[package] = version(package)
+            except PackageNotFoundError:
+                package_versions[package] = "not installed"
+        diagnostics.update({
+            "package_versions": package_versions,
+            "pdf_pages": 0,
+            "text_characters_by_page": [],
+            "parser_route": None,
+            "parsed_rows": 0,
+        })
 
     with pdfplumber.open(file) as pdf:
+        if diagnostics is not None:
+            diagnostics["pdf_pages"] = len(pdf.pages)
+            diagnostics["text_characters_by_page"] = [
+                len(page.extract_text() or "") for page in pdf.pages
+            ]
         year = datetime.datetime.now().year
         try:
             first_text = pdf.pages[0].extract_text() or ""
@@ -469,16 +529,33 @@ def extract_pdf_tables(file, debug=False):
 
         ocbc_rows = _parse_ocbc(all_lines, year)
         if ocbc_rows:
+            if diagnostics is not None:
+                diagnostics["parser_route"] = "OCBC text parser"
             rows.extend(ocbc_rows)
         else:
             dcs_rows = _parse_dcs(all_lines, year)
             if dcs_rows:
+                if diagnostics is not None:
+                    diagnostics["parser_route"] = "DCS text parser"
                 rows.extend(dcs_rows)
             else:
-                ocr_rows = _parse_hsbc_rows_from_ocr(_extract_ocr_lines(file), year)
+                ocr_diagnostics = {}
+                ocr_rows = _parse_hsbc_rows_from_ocr(
+                    _extract_ocr_lines(file, diagnostics=ocr_diagnostics), year
+                )
+                if diagnostics is not None:
+                    diagnostics["ocr"] = ocr_diagnostics
                 if ocr_rows:
+                    if diagnostics is not None:
+                        diagnostics["parser_route"] = "HSBC OCR parser"
                     rows.extend(ocr_rows)
                 else:
-                    rows.extend(_parse_citibank(all_lines, year))
+                    citi_rows = _parse_citibank(all_lines, year)
+                    if diagnostics is not None:
+                        diagnostics["parser_route"] = "Citibank text parser" if citi_rows else "No parser matched"
+                    rows.extend(citi_rows)
+
+    if diagnostics is not None:
+        diagnostics["parsed_rows"] = len(rows) - 1
 
     return rows

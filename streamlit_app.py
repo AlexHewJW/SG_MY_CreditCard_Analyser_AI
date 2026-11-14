@@ -383,8 +383,14 @@ with tab1:
     if uploaded_file:
         upload_fingerprint = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
         if st.session_state.get("parsed_pdf_fingerprint") != upload_fingerprint:
-            clean = extract_pdf_tables(uploaded_file)
+            parse_diagnostics = {}
+            try:
+                clean = extract_pdf_tables(uploaded_file, diagnostics=parse_diagnostics)
+            except Exception as parse_error:
+                clean = [["Date", "Description", "Amount"]]
+                parse_diagnostics["parse_error"] = type(parse_error).__name__
             st.session_state.parsed_pdf_fingerprint = upload_fingerprint
+            st.session_state.pdf_parse_diagnostics = parse_diagnostics
 
             if len(clean) <= 1:
                 st.session_state.preview_df = pd.DataFrame(columns=["Date", "Description", "Amount"])
@@ -400,8 +406,11 @@ with tab1:
 
         if st.session_state.get("pdf_parse_failed"):
             st.warning("No transactions were parsed from this PDF. Try the PDF debug panel or check the statement layout.")
+            with st.expander("PDF parse diagnostics"):
+                st.caption("Only parser status, dependency versions, and page/detection counts are shown; statement text is not included.")
+                st.json(st.session_state.get("pdf_parse_diagnostics", {}))
     else:
-        for state_key in ("parsed_pdf_fingerprint", "preview_df", "pdf_parse_failed"):
+        for state_key in ("parsed_pdf_fingerprint", "preview_df", "pdf_parse_failed", "pdf_parse_diagnostics"):
             if state_key in st.session_state:
                 del st.session_state[state_key]
 
