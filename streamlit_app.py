@@ -1,8 +1,10 @@
 import datetime
+import json
 
 import pandas as pd
 import streamlit as st
 
+from browser_storage import browser_transaction_storage
 from config import REQUIRED_COLUMNS
 from telemetry import check_db
 
@@ -14,6 +16,8 @@ st.set_page_config(
 
 if "master_df" not in st.session_state:
     st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
+if "browser_storage_loaded" not in st.session_state:
+    st.session_state.browser_storage_loaded = False
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 if "is_processing_pdf" not in st.session_state:
@@ -32,9 +36,48 @@ if "csv_loaded" not in st.session_state:
 if "db_ok" not in st.session_state:
     st.session_state.db_ok, st.session_state.db_error = check_db()
 
+transaction_records = json.loads(
+    st.session_state.master_df.to_json(orient="records", date_format="iso")
+)
+storage_result = browser_transaction_storage(
+    storage_key="sg-spend-tracker-transactions-v1",
+    ready=st.session_state.browser_storage_loaded,
+    transactions=transaction_records,
+)
+
+if not st.session_state.browser_storage_loaded:
+    if storage_result.loaded is None:
+        st.caption("Restoring your transactions from this browser…")
+        st.stop()
+
+    loaded_data = storage_result.loaded
+    if loaded_data.get("error"):
+        st.session_state.browser_storage_error = loaded_data["error"]
+    else:
+        stored_df = pd.DataFrame(loaded_data.get("transactions", []))
+        if not stored_df.empty:
+            for column in REQUIRED_COLUMNS:
+                if column not in stored_df.columns:
+                    stored_df[column] = None
+            stored_df["Date"] = pd.to_datetime(stored_df["Date"], errors="coerce")
+            stored_df["Month"] = stored_df["Date"].dt.strftime("%b")
+            stored_df["Year"] = stored_df["Date"].dt.year
+            stored_df["Amount"] = pd.to_numeric(
+                stored_df["Amount"], errors="coerce"
+            ).fillna(0.0)
+            st.session_state.master_df = stored_df[REQUIRED_COLUMNS].reset_index(drop=True)
+    st.session_state.browser_storage_loaded = True
+    st.rerun()
+
 st.title("SG Spend Tracker", icon=":material/account_balance_wallet:")
 st.caption("A simple view of your monthly spending.")
-st.markdown(":material/info: Your transactions are saved for this session. Download a CSV backup before leaving.")
+st.markdown(":material/info: Transactions save in this browser. Download a CSV backup to keep a separate copy.")
+if st.session_state.get("browser_storage_error") or storage_result.save_error:
+    st.warning(
+        st.session_state.get("browser_storage_error")
+        or storage_result.save_error
+        or "Browser storage is unavailable. Download a CSV backup to keep your data."
+    )
 
 with st.expander("Save or restore data", expanded=False, icon=":material/save:"):
     st.download_button(

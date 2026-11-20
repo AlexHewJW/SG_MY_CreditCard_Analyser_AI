@@ -1,5 +1,6 @@
 import datetime
 
+import altair as alt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -47,6 +48,41 @@ if "filter_year" not in st.session_state:
 if "filter_month" not in st.session_state:
     st.session_state.filter_month = datetime.datetime.now().strftime("%b")
 
+master_df = st.session_state.master_df
+filtered_data = master_df.copy()
+filtered_data["Date"] = pd.to_datetime(filtered_data["Date"], errors="coerce")
+filtered_data = filtered_data.dropna(subset=["Date"])
+filtered_data["Year"] = filtered_data["Date"].dt.year
+filtered_data["Month"] = filtered_data["Date"].dt.strftime("%b")
+
+chart_year = st.session_state.filter_year
+year_data = filtered_data[filtered_data["Year"] == chart_year].copy()
+year_data["Amount"] = pd.to_numeric(year_data["Amount"], errors="coerce").fillna(0.0)
+monthly_spending = (
+    year_data.groupby("Month")["Amount"]
+    .sum()
+    .reindex(months, fill_value=0.0)
+)
+st.subheader(f"Monthly spending · {chart_year}")
+if (monthly_spending > 0).any():
+    monthly_comparison = pd.DataFrame({"Month": months, "Spending": monthly_spending.values})
+    monthly_chart = (
+        alt.Chart(monthly_comparison)
+        .mark_bar(color="#287A68", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .encode(
+            x=alt.X("Month:N", sort=months, axis=alt.Axis(title=None, labelAngle=0, grid=False)),
+            y=alt.Y("Spending:Q", axis=alt.Axis(title=None, format="$,.0f", grid=False)),
+            tooltip=[
+                alt.Tooltip("Month:N", title="Month"),
+                alt.Tooltip("Spending:Q", title="Spending", format="$,.2f"),
+            ],
+        )
+        .properties(height=210)
+    )
+    st.altair_chart(monthly_chart, width="stretch", alt=f"Monthly spending totals for {chart_year}")
+else:
+    st.caption("Add transactions to see your month-by-month spending comparison.")
+
 filter_year_col, filter_month_col = st.columns(2)
 with filter_year_col:
     selected_year = st.selectbox("Year", years, key="filter_year")
@@ -58,13 +94,6 @@ with filter_month_col:
         format_func=lambda month: datetime.datetime.strptime(month, "%b").strftime("%B"),
     )
 selected_month_label = datetime.datetime.strptime(selected_month, "%b").strftime("%B")
-
-master_df = st.session_state.master_df
-filtered_data = master_df.copy()
-filtered_data["Date"] = pd.to_datetime(filtered_data["Date"], errors="coerce")
-filtered_data = filtered_data.dropna(subset=["Date"])
-filtered_data["Year"] = filtered_data["Date"].dt.year
-filtered_data["Month"] = filtered_data["Date"].dt.strftime("%b")
 
 month_data = filtered_data[
     (filtered_data["Year"] == selected_year)
@@ -112,23 +141,6 @@ if not master_df.empty:
         st.plotly_chart(category_chart, width="stretch")
 else:
     st.caption(":material/inbox: No transactions yet. Select Add transactions to import a statement or enter one manually.")
-
-year_data = filtered_data[filtered_data["Year"] == selected_year].copy()
-year_data["Amount"] = pd.to_numeric(year_data["Amount"], errors="coerce").fillna(0.0)
-monthly_spending = (
-    year_data.groupby("Month")["Amount"]
-    .sum()
-    .reindex(months, fill_value=0.0)
-)
-with st.expander(f"Compare spending across {selected_year}"):
-    monthly_comparison = pd.DataFrame({"Month": months, "Spending": monthly_spending.values})
-    monthly_chart = px.bar(monthly_comparison, x="Month", y="Spending")
-    monthly_chart.update_layout(
-        margin=dict(t=8, b=8, l=8, r=8),
-        xaxis_title=None,
-        yaxis_title="Spending (S$)",
-    )
-    st.plotly_chart(monthly_chart, width="stretch")
 
 if not master_df.empty:
     history = master_df.copy()
