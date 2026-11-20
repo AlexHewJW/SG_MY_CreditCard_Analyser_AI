@@ -78,7 +78,7 @@ hr {
 </style>
 """, unsafe_allow_html=True)
 
-DEBUG_MODE = False  # flip to True locally
+DEBUG_MODE = False
 
 
 # ----------------------------
@@ -404,11 +404,45 @@ with tab1:
                 st.session_state.preview_df = df.reset_index(drop=True)
                 st.session_state.pdf_parse_failed = False
 
+        parse_diagnostics = st.session_state.get("pdf_parse_diagnostics", {})
+        ocr_diagnostics = parse_diagnostics.get("ocr", {})
+        diagnostic_summary = {
+            key: parse_diagnostics[key]
+            for key in (
+                "parser_route",
+                "parsed_rows",
+                "pdf_pages",
+                "text_characters_by_page",
+                "python_version",
+                "package_versions",
+                "parse_error",
+            )
+            if key in parse_diagnostics
+        }
+        if ocr_diagnostics:
+            diagnostic_summary["ocr"] = {
+                key: ocr_diagnostics[key]
+                for key in (
+                    "available",
+                    "missing_dependencies",
+                    "pages",
+                    "detections_by_page",
+                    "header_pages",
+                    "fallback_pass_used",
+                    "fallback_detections_by_page",
+                    "ocr_rows_collected",
+                    "hsbc_date_crop_attempts",
+                    "hsbc_date_crop_recoveries",
+                    "error",
+                )
+                if key in ocr_diagnostics
+            }
+
         if st.session_state.get("pdf_parse_failed"):
             st.warning("No transactions were parsed from this PDF. Try the PDF debug panel or check the statement layout.")
-            with st.expander("PDF parse diagnostics"):
-                st.caption("Only parser status, dependency versions, and page/detection counts are shown; statement text is not included.")
-                st.json(st.session_state.get("pdf_parse_diagnostics", {}))
+        with st.expander("PDF parse diagnostics", expanded=st.session_state.get("pdf_parse_failed", False)):
+            st.caption("Sanitized parser and OCR counts only. Statement text and transaction details are not included; row counts do not guarantee that every transaction was detected.")
+            st.json(diagnostic_summary)
     else:
         for state_key in ("parsed_pdf_fingerprint", "preview_df", "pdf_parse_failed", "pdf_parse_diagnostics"):
             if state_key in st.session_state:
