@@ -65,13 +65,6 @@ st.title("SG Spend Tracker", icon=":material/account_balance_wallet:")
 st.caption("A simple view of your monthly spending.")
 st.markdown(":material/info: Your transactions are saved for this session. Download a CSV backup before leaving.")
 
-st.subheader("Add transactions")
-uploaded_file = st.file_uploader(
-    "Choose a statement PDF",
-    type=["pdf"],
-    key=f"pdf_{st.session_state.uploader_key}"
-)
-
 with st.expander("Save or restore data", expanded=False, icon=":material/save:"):
     st.download_button(
         label="Download CSV backup",
@@ -106,6 +99,16 @@ with st.expander("Save or restore data", expanded=False, icon=":material/save:")
 
         st.success("Your backup has been restored.")
         st.rerun()
+
+# Keep both ways to add transactions together near the top of the page.
+tab1, tab2 = st.tabs(["Upload a statement", "Add manually"])
+
+with tab1:
+    uploaded_file = st.file_uploader(
+        "Choose a statement PDF",
+        type=["pdf"],
+        key=f"pdf_{st.session_state.uploader_key}"
+    )
 
 # ----------------------------
 # MONTH / YEAR FILTER
@@ -242,14 +245,6 @@ with st.expander(f"Compare spending across {selected_year}"):
     st.plotly_chart(monthly_fig, width="stretch")
 
 # ----------------------------
-# TABS
-# ----------------------------
-tabs = st.tabs(["Upload a statement", "Add manually"])
-
-tab1 = tabs[0]
-tab2 = tabs[1]
-
-# ----------------------------
 # UPLOAD TAB
 # ----------------------------
 with tab1:
@@ -319,7 +314,6 @@ with tab1:
                 df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
                 df = df.dropna(subset=["Amount"]).copy()
                 df["Amount"] = df["Amount"].abs()
-                df["Amount"] = df["Amount"].apply(lambda x: f"{x:,.2f}")
                 st.session_state.preview_df = df.reset_index(drop=True)
                 st.session_state.pdf_parse_failed = False
             st.rerun()
@@ -374,28 +368,92 @@ with tab1:
         df = st.session_state.preview_df
 
         st.subheader("Review imported transactions")
-        st.caption("Remove any transaction that does not belong in this statement.")
-        for row_index, row in df.iterrows():
-            with st.container(horizontal=True, vertical_alignment="center", border=True):
-                st.markdown(
-                    f"**{row['Description']}**  \n{row['Date']} · S${row['Amount']}"
-                )
-                if st.button(
-                    "Remove",
-                    icon=":material/delete:",
-                    key=f"preview_del_{st.session_state.parsed_pdf_fingerprint[:12]}_{row_index}",
-                    help="Remove this transaction from the import.",
-                ):
-                    st.session_state.preview_df = (
-                        df.drop(index=row_index).reset_index(drop=True)
-                    )
-                    st.rerun()
+        st.caption("Check the imported details before adding them to your tracker. Amounts are in S$.")
+        if "preview_editor_revision" not in st.session_state:
+            st.session_state.preview_editor_revision = 0
+
+        editor_key = (
+            f"preview_editor_{st.session_state.parsed_pdf_fingerprint[:12]}_"
+            f"{st.session_state.preview_editor_revision}"
+        )
+        preview_rows = df.reset_index(drop=True).copy()
+        if "Delete" not in preview_rows.columns:
+            preview_rows.insert(0, "Delete", False)
+
+        if st.button(
+            "Add a transaction",
+            icon=":material/add:",
+            help="Add a row if the statement contains a transaction the parser missed.",
+        ):
+            preview_rows = pd.concat(
+                [
+                    preview_rows,
+                    pd.DataFrame([{
+                        "Delete": False,
+                        "Date": "",
+                        "Description": "",
+                        "Amount": 0.0,
+                    }]),
+                ],
+                ignore_index=True,
+            )
+            st.session_state.preview_df = preview_rows
+            st.session_state.preview_editor_revision += 1
+            st.rerun()
+
+        edited_preview = st.data_editor(
+            preview_rows,
+            key=editor_key,
+            column_config={
+                "Delete": st.column_config.CheckboxColumn(
+                    "Delete",
+                    width=62,
+                    help="Select rows to remove from this import.",
+                ),
+                "Date": st.column_config.TextColumn("Date", width=74),
+                "Description": st.column_config.TextColumn("Merchant", width=130),
+                "Amount": st.column_config.NumberColumn(
+                    "Amount",
+                    width=82,
+                    format="S$%.2f",
+                    min_value=0.0,
+                    step=0.01,
+                ),
+            },
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            height=300,
+            alt="Imported transactions ready for review",
+        ).reset_index(drop=True)
+        st.session_state.preview_df = edited_preview
+
+        selected_for_deletion = edited_preview["Delete"].fillna(False)
+        if st.button(
+            "Delete selected",
+            icon=":material/delete:",
+            disabled=not selected_for_deletion.any(),
+            help="Remove the checked transactions from this import.",
+        ):
+            st.session_state.preview_df = (
+                edited_preview.loc[~selected_for_deletion]
+                .drop(columns="Delete")
+                .reset_index(drop=True)
+            )
+            st.session_state.preview_editor_revision += 1
+            st.rerun()
+
+        st.session_state.preview_df = st.session_state.preview_df.drop(
+            columns="Delete", errors="ignore"
+        )
+        df = st.session_state.preview_df
 
     # ✅ PROCESS FIRST
     if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
         show_processing_dialog("Categorizing transactions and adding them to your tracker…")
         with st.spinner("AI is categorizing..."):
             work_df = st.session_state.temp_df.copy()
+            work_df = work_df.drop(columns="Delete", errors="ignore")
 
             # REMOVE FORMATTING: Convert "SGD 1,234.56" -> 1234.56 (float)
             work_df["Amount"] = (
@@ -630,22 +688,40 @@ if not st.session_state.master_df.empty:
     if df.empty:
         st.info("No transactions found.")
     else:
-        for pos, (idx, row) in enumerate(df.iterrows()):
-            col1, col2, col3 = st.columns([6,2,2])
-
-            with col1:
-                st.write(f"**{row['Description']}**")
-                st.caption(f"{row['Category']} • {row['Date'].strftime('%d %b %Y')}")
-
-            with col2:
-                st.write(f"S$ {row['Amount']:.2f}")
-
-            with col3:
-                # ✅ EDIT ALWAYS AVAILABLE
-                if st.button("Edit", icon=":material/edit:", key=f"edit_{pos}"):
-                    st.session_state.edit_index = idx
-                    st.session_state.show_edit = True
-                    st.rerun()
-
-            st.divider()
+        history_key = f"transaction_history_{st.session_state.filter_year}_{st.session_state.filter_month}_{selected_category}"
+        history_view = df[["Date", "Description", "Amount", "Category"]].copy()
+        history_view["Date"] = history_view["Date"].dt.strftime("%d %b %Y")
+        history_view["Amount"] = pd.to_numeric(
+            history_view["Amount"], errors="coerce"
+        ).fillna(0.0)
+        history_selection = st.dataframe(
+            history_view,
+            key=history_key,
+            on_select="rerun",
+            selection_mode="single-row",
+            hide_index=True,
+            height=360,
+            row_height=38,
+            width="stretch",
+            column_config={
+                "Date": st.column_config.TextColumn("Date", width="small"),
+                "Description": st.column_config.TextColumn("Merchant", width="large"),
+                "Amount": st.column_config.NumberColumn(
+                    "Amount",
+                    format="S$%.2f",
+                    width="small",
+                ),
+                "Category": st.column_config.TextColumn("Category", width="medium"),
+            },
+            alt="Transactions for the selected month",
+        )
+        selected_rows = history_selection.selection.rows
+        if st.button(
+            "Edit selected transaction",
+            icon=":material/edit:",
+            disabled=not selected_rows,
+        ):
+            st.session_state.edit_index = df.index[selected_rows[0]]
+            st.session_state.show_edit = True
+            st.rerun()
             
