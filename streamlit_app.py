@@ -9,74 +9,11 @@ from datetime import datetime
 from telemetry import check_db
 from config import REQUIRED_COLUMNS
 
-st.set_page_config(page_title="SG Spend Tracker", page_icon="💳", layout="wide")
-
-st.markdown("""
-<style>
-/* ── Category filter buttons only ── */
-div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] button[kind="secondary"] {
-    border: 1px solid rgba(128,128,128,0.35) !important;
-    border-radius: 6px !important;
-    text-align: left !important;
-    padding: 6px 10px !important;
-    font-family: monospace !important;
-    font-size: 13px !important;
-    background-color: transparent !important;
-    color: inherit !important;
-    transition: all 0.15s ease !important;
-}
-
-div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] button[kind="secondary"]:hover {
-    background-color: rgba(255, 75, 75, 0.08) !important;
-    border-color: #ff4b4b !important;
-}
-
-/* ── Tabs: restore native look ── */
-div[data-testid="stTabs"] button {
-    border: none !important;
-    border-bottom: 2px solid transparent !important;
-    border-radius: 0 !important;
-    text-align: center !important;
-    padding: 8px 20px !important;
-    font-family: inherit !important;
-    font-size: 15px !important;
-    font-weight: 500 !important;
-    background-color: transparent !important;
-    width: auto !important;
-    transition: all 0.15s ease !important;
-}
-
-div[data-testid="stTabs"] button:hover {
-    background-color: rgba(128,128,128,0.06) !important;
-    border-bottom: 2px solid rgba(128,128,128,0.35) !important;
-}
-
-div[data-testid="stTabs"] button[aria-selected="true"] {
-    border-bottom: 2px solid #ff4b4b !important;
-    color: #ff4b4b !important;
-    background-color: transparent !important;
-}
-
-/* ── Edit button in transaction list ── */
-button[kind="secondary"]:has(span:contains("✏️")) {
-    border: 1px solid rgba(128,128,128,0.3) !important;
-    border-radius: 4px !important;
-    font-size: 13px !important;
-}
-
-/* ── Metric label ── */
-div[data-testid="stMetric"] label {
-    font-size: 13px !important;
-    opacity: 0.7;
-}
-
-/* ── Tighten dividers ── */
-hr {
-    margin: 4px 0 !important;
-    opacity: 0.2 !important;
-}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(
+    page_title="SG Spend Tracker",
+    page_icon=":material/account_balance_wallet:",
+    layout="wide",
+)
 
 DEBUG_MODE = False
 
@@ -105,9 +42,12 @@ if "csv_loaded" not in st.session_state:
 # DB CHECK
 # ----------------------------
 if "db_ok" not in st.session_state:
-    ok, err = check_db()
-    if not ok:
-        st.error(f"DB Error: {err}")
+    st.session_state.db_ok, st.session_state.db_error = check_db()
+
+if not st.session_state.db_ok:
+    if DEBUG_MODE:
+        with st.expander("Technical details"):
+            st.code(st.session_state.db_error)
 
 # ----------------------------
 # MASTER DATA
@@ -115,26 +55,28 @@ if "db_ok" not in st.session_state:
 if "master_df" not in st.session_state:
     st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
 
-st.title("💳 SG Spend Tracker")
+st.title("SG Spend Tracker", icon=":material/account_balance_wallet:")
 
-st.caption("⚠️ Remember to download your data before closing the app")
+st.caption("A simple view of your monthly spending.")
+st.markdown(":material/info: Your transactions are saved for this session. Download a CSV backup before leaving.")
 
-st.subheader("Import a statement")
+st.subheader("Add transactions")
 uploaded_file = st.file_uploader(
-    "Upload credit card statement (PDF)",
+    "Choose a statement PDF",
     type=["pdf"],
     key=f"pdf_{st.session_state.uploader_key}"
 )
 
-with st.expander("Backup and restore data", expanded=False):
+with st.expander("Save or restore data", expanded=False, icon=":material/save:"):
     st.download_button(
-        label="Save backup data",
+        label="Download CSV backup",
         data=st.session_state.master_df.to_csv(index=False).encode("utf-8"),
         file_name="transactions.csv",
-        mime="text/csv"
+        mime="text/csv",
+        icon=":material/download:",
     )
 
-    uploaded_csv = st.file_uploader("Load saved transaction data", type=["csv"])
+    uploaded_csv = st.file_uploader("Restore from CSV", type=["csv"])
 
     if uploaded_csv is None:
         st.session_state.csv_loaded = False
@@ -157,7 +99,7 @@ with st.expander("Backup and restore data", expanded=False):
 
         st.session_state.csv_loaded = True
 
-        st.success("Saved data loaded successfully.")
+        st.success("Your backup has been restored.")
         st.rerun()
 
 # ----------------------------
@@ -206,127 +148,98 @@ if "filter_year" not in st.session_state:
 if "filter_month" not in st.session_state:
     st.session_state.filter_month = datetime.now().strftime("%b")
 
-selected_year = st.selectbox("Year", years, key="filter_year")
-
-year_df = df_filter[df_filter["Year"] == selected_year].copy()
-year_df["Amount"] = pd.to_numeric(year_df["Amount"], errors="coerce").fillna(0.0)
-monthly_totals = (
-    year_df.assign(Month=year_df["Date"].dt.strftime("%b"))
-    .groupby("Month")["Amount"]
-    .agg(Total="sum", Transactions="count")
-    .reindex(months, fill_value=0)
-)
-
-st.subheader(f"Spending by month · {selected_year}")
-monthly_overview = pd.DataFrame({
-    "Month": months,
-    "Total spend": [f"S${monthly_totals.loc[month, 'Total']:,.2f}" for month in months],
-    "Transactions": [int(monthly_totals.loc[month, "Transactions"]) for month in months],
-})
-st.caption("Select a month row to view its transactions.")
-monthly_selection = st.dataframe(
-    monthly_overview,
-    hide_index=True,
-    key=f"monthly_overview_{selected_year}",
-    on_select="rerun",
-    selection_mode="single-row",
-    height=470,
-    alt=f"Monthly spending and transaction counts for {selected_year}",
-)
-selected_rows = monthly_selection.selection.rows
-if selected_rows:
-    st.session_state.filter_month = months[selected_rows[0]]
+filter_year_col, filter_month_col = st.columns(2)
+with filter_year_col:
+    selected_year = st.selectbox("Year", years, key="filter_year")
+with filter_month_col:
+    selected_month = st.selectbox(
+        "Month",
+        months,
+        key="filter_month",
+        format_func=lambda month: datetime.strptime(month, "%b").strftime("%B"),
+    )
+selected_month_label = datetime.strptime(selected_month, "%b").strftime("%B")
 
 # ----------------------------
 # SUMMARY
 # ----------------------------
+st.subheader(f"{selected_month_label} {selected_year}")
+
 if not st.session_state.master_df.empty:
     m_df = st.session_state.master_df.copy()
     m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
 
-    # ✅ RESET MONTH (top, very visible)
-    col_reset, _ = st.columns([1, 5])
-    with col_reset:
-        if st.button("🧹 Reset This Month", use_container_width=True):
+    with st.expander("Month actions", expanded=st.session_state.get("confirm_reset", False)):
+        if st.button(
+            "Delete this month's transactions",
+            icon=":material/delete:",
+        ):
             st.session_state.confirm_reset = True
 
-    # ✅ CONFIRMATION UI
-    if st.session_state.get("confirm_reset"):
-        st.warning("Confirm delete ALL transactions for this month?")
-        c1, c2 = st.columns(2)
+        if st.session_state.get("confirm_reset"):
+            st.warning("This will permanently remove every transaction for this month.")
+            confirm_col, cancel_col = st.columns(2)
+            if confirm_col.button("Delete transactions", type="primary"):
+                st.session_state.master_df = delete_month(
+                    st.session_state.master_df,
+                    st.session_state.filter_year,
+                    st.session_state.filter_month,
+                )
+                st.session_state.reset_month_view = (
+                    st.session_state.filter_year,
+                    st.session_state.filter_month,
+                )
+                st.session_state.pop("category_filter", None)
+                del st.session_state.confirm_reset
+                st.rerun()
+            if cancel_col.button("Keep transactions"):
+                del st.session_state.confirm_reset
+                st.rerun()
 
-        if c1.button("✅ Yes, delete", use_container_width=True):
-            df = st.session_state.master_df.copy()
-            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-            st.session_state.reset_month_view = (
-                st.session_state.filter_year,
-                st.session_state.filter_month,
-            )
-
-            st.session_state.master_df = delete_month(
-                st.session_state.master_df,
-                st.session_state.filter_year,
-                st.session_state.filter_month
-            )
-            # clear category filter if exists
-            if "selected_category" in st.session_state:
-                del st.session_state["selected_category"]
-
-            del st.session_state.confirm_reset
-            st.rerun()
-
-        if c2.button("Cancel", use_container_width=True):
-            del st.session_state.confirm_reset
-            st.rerun()
-
-    df = st.session_state.master_df.copy()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-
-    # ✅ FILTER CURRENT MONTH
-    if "filter_year" in st.session_state and "filter_month" in st.session_state:
-        m_df = m_df[
-            (m_df["Date"].dt.year == st.session_state.filter_year) &
-            (m_df["Date"].dt.strftime("%b") == st.session_state.filter_month)
-        ]
-
-    # ✅ CLEAN TYPES
+    m_df["Date"] = pd.to_datetime(m_df["Date"], errors="coerce")
+    m_df = m_df[
+        (m_df["Date"].dt.year == selected_year)
+        & (m_df["Date"].dt.strftime("%b") == selected_month)
+    ].copy()
     m_df["Amount"] = pd.to_numeric(m_df["Amount"], errors="coerce").fillna(0.0)
     m_df = m_df.dropna(subset=["Amount", "Date"])
 
-    col1, col2 = st.columns([1, 2])
+    metric_spend, metric_count = st.columns(2)
+    metric_spend.metric("Total spending", f"S${m_df['Amount'].sum():,.2f}")
+    metric_count.metric("Transactions", f"{len(m_df):,}")
 
-    # ✅ LEFT SIDE (summary table buttons)
-    with col1:
-        st.metric("Total Spend", f"S${m_df['Amount'].sum():,.2f}")
+    if m_df.empty:
+        st.caption(":material/inbox: No transactions for this month. Add a statement or enter one manually below.")
+    else:
+        st.subheader("Spending by category")
+        fig = px.pie(m_df, values="Amount", names="Category", hole=0.58)
+        fig.update_layout(margin=dict(t=8, b=8, l=8, r=8), legend_title_text="Category")
+        st.plotly_chart(fig, width="stretch")
+else:
+    st.caption(":material/inbox: No transactions yet. Add a statement above or enter one manually below.")
 
-        summary = m_df.groupby("Category")["Amount"].sum().reset_index()
-
-        st.subheader("By Category")
-
-        if "selected_category" in st.session_state:
-            if st.button("❌ Reset Filter", key="clear_filter_top"):
-                del st.session_state["selected_category"]
-                st.rerun()
-
-        for i, row in summary.iterrows():
-            if st.button(f"{row['Category']}  •  S${row['Amount']:,.2f}", key=f"cat_{i}", use_container_width=True):
-                st.session_state.selected_category = row["Category"]
-
-    # ✅ RIGHT SIDE (chart)
-    with col2:
-        if m_df.empty:
-            st.info("No data for selected month.")
-        else:
-            fig = px.pie(m_df, values="Amount", names="Category", hole=0.4)
-            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-            st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
+year_df = df_filter[df_filter["Year"] == selected_year].copy()
+year_df["Amount"] = pd.to_numeric(year_df["Amount"], errors="coerce").fillna(0.0)
+yearly_monthly_spend = (
+    year_df.assign(Month=year_df["Date"].dt.strftime("%b"))
+    .groupby("Month")["Amount"]
+    .sum()
+    .reindex(months, fill_value=0.0)
+)
+with st.expander(f"Compare spending across {selected_year}"):
+    monthly_comparison = pd.DataFrame({"Month": months, "Spending": yearly_monthly_spend.values})
+    monthly_fig = px.bar(monthly_comparison, x="Month", y="Spending")
+    monthly_fig.update_layout(
+        margin=dict(t=8, b=8, l=8, r=8),
+        xaxis_title=None,
+        yaxis_title="Spending (S$)",
+    )
+    st.plotly_chart(monthly_fig, width="stretch")
 
 # ----------------------------
 # TABS
 # ----------------------------
-tabs = st.tabs(["📂 Upload", "✍️ Manual"])
+tabs = st.tabs(["Upload a statement", "Add manually"])
 
 tab1 = tabs[0]
 tab2 = tabs[1]
@@ -400,7 +313,7 @@ with tab1:
                 df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
                 df = df.dropna(subset=["Amount"]).copy()
                 df["Amount"] = df["Amount"].abs()
-                df["Amount"] = df["Amount"].apply(lambda x: f"SGD {x:,.2f}")
+                df["Amount"] = df["Amount"].apply(lambda x: f"{x:,.2f}")
                 st.session_state.preview_df = df.reset_index(drop=True)
                 st.session_state.pdf_parse_failed = False
 
@@ -453,26 +366,23 @@ with tab1:
     if "preview_df" in st.session_state and not st.session_state.preview_df.empty:
         df = st.session_state.preview_df
 
-        st.subheader("Preview")
-
-        for i, row in df.iterrows():
-            col1, col2, col3, col4 = st.columns([2,6,2,1])
-
-            with col1:
-                st.write(row["Date"])
-
-            with col2:
-                st.write(row["Description"])
-
-            with col3:
-                st.write(row["Amount"])
-
-            with col4:
-                if st.button("🗑", key=f"preview_del_{i}"):
-                    st.session_state.preview_df = df.drop(i).reset_index(drop=True)
+        st.subheader("Review imported transactions")
+        st.caption("Remove any transaction that does not belong in this statement.")
+        for row_index, row in df.iterrows():
+            with st.container(horizontal=True, vertical_alignment="center", border=True):
+                st.markdown(
+                    f"**{row['Description']}**  \n{row['Date']} · S${row['Amount']}"
+                )
+                if st.button(
+                    "Remove",
+                    icon=":material/delete:",
+                    key=f"preview_del_{st.session_state.parsed_pdf_fingerprint[:12]}_{row_index}",
+                    help="Remove this transaction from the import.",
+                ):
+                    st.session_state.preview_df = (
+                        df.drop(index=row_index).reset_index(drop=True)
+                    )
                     st.rerun()
-
-        st.divider()
 
     # ✅ PROCESS FIRST
     if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
@@ -551,13 +461,13 @@ with tab1:
         col1, col2 = st.columns(2)
 
         with col1:
-            if "preview_df" in st.session_state and not st.session_state.preview_df.empty and st.button("🚀 Add to Master Tracker", use_container_width=True):
+            if "preview_df" in st.session_state and not st.session_state.preview_df.empty and st.button("Add transactions", type="primary", width="stretch"):
                 st.session_state.temp_df = df.copy()
                 st.session_state.is_processing_pdf = True
                 st.rerun()
 
         with col2:
-            if st.button("❌ Discard", use_container_width=True):
+            if st.button("Remove statement", width="stretch"):
                 # ✅ clear preview and reset uploader
                 if "preview_df" in st.session_state:
                     del st.session_state.preview_df
@@ -577,7 +487,7 @@ with tab2:
         st.session_state.is_submitting_manual = False
 
     with st.form("manual"):
-        d = st.text_input("Merchant")
+        d = st.text_input("Merchant or description")
         a = st.number_input("Amount", min_value=0.0)
         dt = st.date_input("Date")
 
@@ -641,7 +551,7 @@ if st.session_state.show_edit:
         st.session_state.show_edit = False
         st.rerun()
 
-    st.subheader("✏️ Edit Transaction")
+    st.subheader("Edit transaction")
 
     # Force values to primitive types (str, float) to avoid ValueError
     nd = st.text_input("Description", value=str(row["Description"]))
@@ -683,11 +593,6 @@ if st.session_state.show_edit:
 # HISTORY
 # ----------------------------
 if not st.session_state.master_df.empty:
-    if "selected_category" in st.session_state:
-        st.subheader(f"📝 {st.session_state.selected_category} Transactions")
-    else:
-        st.subheader("📝 All Transactions")
-
     df = st.session_state.master_df.copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
@@ -698,9 +603,16 @@ if not st.session_state.master_df.empty:
             (df["Date"].dt.strftime("%b") == st.session_state.filter_month)
         ]
 
-    # ✅ FILTER LOGIC
-    if "selected_category" in st.session_state:
-        df = df[df["Category"] == st.session_state.selected_category]
+    category_options = sorted(df["Category"].dropna().astype(str).unique().tolist())
+    selected_category = st.selectbox(
+        "Filter by category",
+        ["All categories", *category_options],
+        key="category_filter",
+    )
+    if selected_category != "All categories":
+        df = df[df["Category"] == selected_category]
+
+    st.subheader(f"{selected_month_label} transactions")
 
     # ✅ SORT
     df = df.sort_values(by="Date", ascending=False)
@@ -721,7 +633,7 @@ if not st.session_state.master_df.empty:
 
             with col3:
                 # ✅ EDIT ALWAYS AVAILABLE
-                if st.button("✏️ Edit", key=f"edit_{pos}", use_container_width=True):
+                if st.button("Edit", icon=":material/edit:", key=f"edit_{pos}"):
                     st.session_state.edit_index = idx
                     st.session_state.show_edit = True
                     st.rerun()
