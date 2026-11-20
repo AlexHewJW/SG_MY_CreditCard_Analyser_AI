@@ -439,10 +439,11 @@ with tab1:
             }
 
         if st.session_state.get("pdf_parse_failed"):
-            st.warning("No transactions were parsed from this PDF. Try the PDF debug panel or check the statement layout.")
-        with st.expander("PDF parse diagnostics", expanded=st.session_state.get("pdf_parse_failed", False)):
-            st.caption("Sanitized parser and OCR counts only. Statement text and transaction details are not included; row counts do not guarantee that every transaction was detected.")
-            st.json(diagnostic_summary)
+            st.warning("No transactions were parsed from this PDF. Check that it is a supported statement with readable transaction details.")
+        if DEBUG_MODE:
+            with st.expander("PDF parse diagnostics", expanded=st.session_state.get("pdf_parse_failed", False)):
+                st.caption("Sanitized parser and OCR counts only. Statement text and transaction details are not included; row counts do not guarantee that every transaction was detected.")
+                st.json(diagnostic_summary)
     else:
         for state_key in ("parsed_pdf_fingerprint", "preview_df", "pdf_parse_failed", "pdf_parse_diagnostics"):
             if state_key in st.session_state:
