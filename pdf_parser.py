@@ -356,7 +356,8 @@ def _parse_hsbc_rows_from_ocr(result, year):
             if len(ordered) < 3:
                 continue
 
-            date_tokens = []
+            posting_date_tokens = []
+            transaction_date_tokens = []
             desc_parts = []
             amount_text = ''
 
@@ -364,14 +365,16 @@ def _parse_hsbc_rows_from_ocr(result, year):
                 text = item['text']
                 if not text:
                     continue
-                if item['x0'] < 260:
-                    date_tokens.append(text)
+                if item['x0'] < 185:
+                    posting_date_tokens.append(text)
+                elif item['x0'] < 260:
+                    transaction_date_tokens.append(text)
                 elif 260 <= item['x0'] < 650:
                     desc_parts.append(text)
                 elif 650 <= item['x0'] <= 760:
                     amount_text = text
 
-            if not date_tokens or not amount_text:
+            if not (posting_date_tokens or transaction_date_tokens) or not amount_text:
                 continue
 
             if not re.fullmatch(r'[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))', amount_text.strip(), re.IGNORECASE):
@@ -391,7 +394,9 @@ def _parse_hsbc_rows_from_ocr(result, year):
             if re.fullmatch(r'[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))', desc, re.IGNORECASE):
                 continue
 
-            date_text = _pick_date_token(date_tokens)
+            date_text = _pick_date_token(transaction_date_tokens)
+            if not date_text:
+                date_text = _pick_date_token(posting_date_tokens)
             if not date_text:
                 continue
 
@@ -455,6 +460,8 @@ def _extract_ocr_lines(file, diagnostics=None):
         rows = []
         detection_counts = []
         header_pages = []
+        hsbc_date_crop_attempts = 0
+        hsbc_date_crop_recoveries = 0
         for page_index in range(len(pdf)):
             page = pdf[page_index]
             bitmap = page.render(scale=2)
@@ -468,9 +475,91 @@ def _extract_ocr_lines(file, diagnostics=None):
             if has_table_header:
                 header_pages.append(page_index + 1)
                 rows.extend([(page_index, box, text, score) for box, text, score in result])
+            has_hsbc_date_columns = any(text.strip() == 'POST' for text in texts) and any(
+                text.strip() == 'TRAN' for text in texts
+            )
+            if not has_hsbc_date_columns:
+                continue
+
+            page_posting_months = []
+            amount_rows = []
+            for box, text, score in result:
+                coords = [coord for point in box for coord in point]
+                x0 = min(coords[0::2])
+                x1 = max(coords[0::2])
+                y0 = min(coords[1::2])
+                y1 = max(coords[1::2])
+                row_y = (y0 + y1) / 2
+                if x0 < 185:
+                    posting_match = re.fullmatch(r'\d{1,2}\s+([A-Za-z]{3,9})', text.strip())
+                    if posting_match:
+                        page_posting_months.append(posting_match.group(1))
+                if 650 <= x0 <= 760 and x1 <= 780 and re.fullmatch(
+                    r'[-]?(?:\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))',
+                    text.strip(),
+                ):
+                    amount_rows.append(row_y)
+
+            if not amount_rows:
+                continue
+
+            page_month = max(set(page_posting_months), key=page_posting_months.count) if page_posting_months else None
+            high_resolution_image = np.asarray(page.render(scale=4).to_pil())
+            for row_y in amount_rows:
+                existing_transaction_date = any(
+                    185 <= min(coord for point in box for coord in point[0::2]) < 260
+                    and abs(
+                        (min(coord for point in box for coord in point[1::2])
+                         + max(coord for point in box for coord in point[1::2])) / 2
+                        - row_y
+                    ) <= 18
+                    and re.fullmatch(r'\d{1,2}\s+[A-Za-z]{3,9}', text.strip())
+                    for box, text, _score in result
+                )
+                if existing_transaction_date:
+                    continue
+
+                hsbc_date_crop_attempts += 1
+                scale_factor = 2
+                crop_top = max(0, int((row_y - 10) * scale_factor))
+                crop_bottom = min(high_resolution_image.shape[0], int((row_y + 10) * scale_factor))
+                crop_left = int(185 * scale_factor)
+                crop_right = int(260 * scale_factor)
+                date_crop = high_resolution_image[crop_top:crop_bottom, crop_left:crop_right]
+                try:
+                    crop_result, _ = ocr(date_crop)
+                except Exception:
+                    continue
+                crop_texts = [str(item[1]).strip() for item in (crop_result or []) if len(item) > 1]
+                combined_date_text = ' '.join(crop_texts)
+                date_match = re.search(
+                    r'(?P<day>\d{1,2})\s*(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)',
+                    combined_date_text,
+                    re.IGNORECASE,
+                )
+                if date_match:
+                    recovered_date = f"{date_match.group('day')} {date_match.group('mon')}"
+                else:
+                    day_candidates = [
+                        token for token in crop_texts
+                        if re.fullmatch(r'\d{1,2}', token)
+                        and 1 <= int(token) <= 31
+                    ]
+                    if len(day_candidates) != 1 or not page_month:
+                        continue
+                    recovered_date = f"{day_candidates[0]} {page_month}"
+
+                recovered_box = [
+                    [205, row_y - 5], [254, row_y - 5],
+                    [254, row_y + 5], [205, row_y + 5],
+                ]
+                rows.append((page_index, recovered_box, recovered_date, 1.0))
+                hsbc_date_crop_recoveries += 1
         if diagnostics is not None:
             diagnostics["detections_by_page"] = detection_counts
             diagnostics["header_pages"] = header_pages
+            diagnostics["hsbc_date_crop_attempts"] = hsbc_date_crop_attempts
+            diagnostics["hsbc_date_crop_recoveries"] = hsbc_date_crop_recoveries
         if not rows:
             if diagnostics is not None:
                 diagnostics["fallback_pass_used"] = True
