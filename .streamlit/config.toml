@@ -1,0 +1,21 @@
+[theme]
+font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap"
+baseRadius = "small"
+buttonRadius = "small"
+showWidgetBorder = true
+chartCategoricalColors = ["#277A68", "#E07A5F", "#D3A048", "#5C86A8", "#9B78A5", "#7D9274"]
+
+[theme.light]
+primaryColor = "#287A68"
+backgroundColor = "#FBFAF7"
+secondaryBackgroundColor = "#F0F2EC"
+textColor = "#26332E"
+borderColor = "#DCE3DA"
+
+[theme.dark]
+primaryColor = "#73C6A7"
+backgroundColor = "#101916"
+secondaryBackgroundColor = "#192520"
+textColor = "#E9F0EB"
+borderColor = "#31443B"

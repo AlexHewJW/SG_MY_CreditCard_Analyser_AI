@@ -18,6 +18,11 @@ st.set_page_config(
 DEBUG_MODE = False
 
 
+@st.dialog("Please wait", dismissible=False, icon="spinner")
+def show_processing_dialog(message):
+    st.write(message)
+
+
 # ----------------------------
 # STATE INIT
 # ----------------------------
@@ -296,6 +301,7 @@ with tab1:
     if uploaded_file:
         upload_fingerprint = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
         if st.session_state.get("parsed_pdf_fingerprint") != upload_fingerprint:
+            show_processing_dialog("Reading your statement and finding transactions…")
             parse_diagnostics = {}
             try:
                 clean = extract_pdf_tables(uploaded_file, diagnostics=parse_diagnostics)
@@ -316,6 +322,7 @@ with tab1:
                 df["Amount"] = df["Amount"].apply(lambda x: f"{x:,.2f}")
                 st.session_state.preview_df = df.reset_index(drop=True)
                 st.session_state.pdf_parse_failed = False
+            st.rerun()
 
         parse_diagnostics = st.session_state.get("pdf_parse_diagnostics", {})
         ocr_diagnostics = parse_diagnostics.get("ocr", {})
@@ -386,6 +393,7 @@ with tab1:
 
     # ✅ PROCESS FIRST
     if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
+        show_processing_dialog("Categorizing transactions and adding them to your tracker…")
         with st.spinner("AI is categorizing..."):
             work_df = st.session_state.temp_df.copy()
 
@@ -510,6 +518,7 @@ with tab2:
 
     # ✅ Handle processing safely
     if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
+        show_processing_dialog("Categorizing and adding your transaction…")
         with st.spinner("Adding transaction..."):
             data = st.session_state.temp_manual
 
