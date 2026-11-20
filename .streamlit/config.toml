@@ -4,6 +4,7 @@ headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@500
 baseRadius = "small"
 buttonRadius = "small"
 showWidgetBorder = true
+paddingTop = "1rem"
 chartCategoricalColors = ["#277A68", "#E07A5F", "#D3A048", "#5C86A8", "#9B78A5", "#7D9274"]
 
 [theme.light]

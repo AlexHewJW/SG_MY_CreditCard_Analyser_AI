@@ -6,6 +6,19 @@ import streamlit as st
 
 from transaction_service import delete_month
 
+overview_heading, add_action = st.columns([3, 2], vertical_alignment="bottom")
+with overview_heading:
+    st.subheader("Monthly overview")
+    st.caption("Review your spending and transactions by month.")
+with add_action:
+    if st.button(
+        "Add transactions",
+        icon=":material/add_circle:",
+        type="primary",
+        width="stretch",
+    ):
+        st.switch_page("app_pages/add_transactions.py")
+
 current_year = datetime.datetime.now().year
 years = list(range(1996, current_year + 1))[::-1]
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
