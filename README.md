@@ -19,6 +19,13 @@ The goal is to provide a simple and privacy-conscious way for users to understan
 
 Feedback and suggestions are always welcome!
 
+## Privacy and secrets
+
+- Uploaded statements are sent to the Streamlit server for processing. The OCR path opens PDF bytes in memory instead of writing its own temporary PDF file.
+- Transactions and imported-PDF fingerprints are saved in the browser's local storage. They are specific to that browser and site, and can be lost when site data is cleared. Use the CSV backup to keep a separate copy.
+- Configure the `[database]` `url` secret in Streamlit Community Cloud's app settings. For local development, put it in `.streamlit/secrets.toml`; that file is ignored by Git and must not be committed.
+- Do not commit real statements, transaction exports, or screenshots containing personal information.
+
 
 **Try it out here on streamlit**
 https://sgmycreditcardanalyserai-xjqwihzkhxpqdd9kxpn5hz.streamlit.app

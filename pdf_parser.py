@@ -1,7 +1,6 @@
 import pdfplumber
 import re
 import datetime
-import tempfile
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from statistics import median
@@ -444,16 +443,13 @@ def _extract_ocr_lines(file, diagnostics=None):
             diagnostics["error"] = "Required OCR dependencies are unavailable."
         return []
 
+    pdf = None
     try:
         file.seek(0)
         data = file.read()
         if not data:
             return []
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
-            temp_pdf.write(data)
-            temp_path = temp_pdf.name
-
-        pdf = pdfium.PdfDocument(temp_path)
+        pdf = pdfium.PdfDocument(data)
         if diagnostics is not None:
             diagnostics["pages"] = len(pdf)
         ocr = RapidOCR()
@@ -582,6 +578,8 @@ def _extract_ocr_lines(file, diagnostics=None):
             diagnostics["error"] = type(exc).__name__
         return []
     finally:
+        if pdf is not None:
+            pdf.close()
         try:
             file.seek(0)
         except Exception:
