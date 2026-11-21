@@ -170,7 +170,10 @@ if not master_df.empty:
         history_view["Amount"] = pd.to_numeric(history_view["Amount"], errors="coerce").fillna(0.0)
         history_selection = st.dataframe(
             history_view,
-            key=f"transaction_history_{selected_year}_{selected_month}_{selected_category}",
+            key=(
+                f"transaction_history_{selected_year}_{selected_month}_{selected_category}_"
+                f"{st.session_state.get('transaction_history_revision', 0)}"
+            ),
             on_select="rerun",
             selection_mode="single-row",
             hide_index=True,
@@ -186,10 +189,33 @@ if not master_df.empty:
             alt="Transactions for the selected month",
         )
         selected_rows = history_selection.selection.rows
-        if st.button("Edit selected transaction", icon=":material/edit:", disabled=not selected_rows):
-            st.session_state.edit_index = history.index[selected_rows[0]]
+        selected_index = history.index[selected_rows[0]] if selected_rows and selected_rows[0] < len(history) else None
+        selection_context = (selected_year, selected_month, selected_category, selected_index)
+        if st.session_state.get("confirm_delete_transaction") != selection_context:
+            st.session_state.pop("confirm_delete_transaction", None)
+
+        edit_action, delete_action = st.columns(2)
+        if edit_action.button("Edit selected transaction", icon=":material/edit:", disabled=selected_index is None):
+            st.session_state.edit_index = selected_index
             st.session_state.show_edit = True
             st.rerun()
+        if delete_action.button("Delete selected transaction", icon=":material/delete:", disabled=selected_index is None):
+            st.session_state.confirm_delete_transaction = selection_context
+
+        if st.session_state.get("confirm_delete_transaction") == selection_context and selected_index is not None:
+            st.warning(f"Delete {history.loc[selected_index, 'Description']} from your transactions?")
+            confirm_action, cancel_action = st.columns(2)
+            if confirm_action.button("Confirm delete", type="primary"):
+                st.session_state.master_df = st.session_state.master_df.drop(selected_index).reset_index(drop=True)
+                st.session_state.transaction_history_revision = (
+                    st.session_state.get("transaction_history_revision", 0) + 1
+                )
+                st.session_state.show_edit = False
+                st.session_state.pop("confirm_delete_transaction", None)
+                st.rerun()
+            if cancel_action.button("Cancel deletion"):
+                st.session_state.pop("confirm_delete_transaction", None)
+                st.rerun()
 
 if st.session_state.get("show_edit"):
     transaction_index = st.session_state.edit_index
@@ -210,8 +236,11 @@ if st.session_state.get("show_edit"):
     category_index = categories.index(current_category) if current_category in categories else 5
     category = st.selectbox("Category", categories, index=category_index)
 
-    save_col, delete_col, cancel_col = st.columns(3)
-    if save_col.button("Save"):
+    with st.container(horizontal=True):
+        save_clicked = st.button("Save changes", type="primary", icon=":material/check:")
+        cancel_clicked = st.button("Cancel")
+
+    if save_clicked:
         st.session_state.master_df.at[transaction_index, "Description"] = description
         st.session_state.master_df.at[transaction_index, "Amount"] = float(amount)
         st.session_state.master_df.at[transaction_index, "Category"] = category
@@ -222,13 +251,6 @@ if st.session_state.get("show_edit"):
         st.session_state.show_edit = False
         st.rerun()
 
-    if delete_col.button("Delete"):
-        st.session_state.master_df = (
-            st.session_state.master_df.drop(transaction_index).reset_index(drop=True)
-        )
-        st.session_state.show_edit = False
-        st.rerun()
-
-    if cancel_col.button("Cancel"):
+    if cancel_clicked:
         st.session_state.show_edit = False
         st.rerun()
