@@ -66,20 +66,42 @@ monthly_spending = (
 st.subheader(f"Monthly spending · {chart_year}")
 if (monthly_spending > 0).any():
     monthly_comparison = pd.DataFrame({"Month": months, "Spending": monthly_spending.values})
+    chart_key = f"monthly_spending_{chart_year}_{st.session_state.get('monthly_chart_revision', 0)}"
+    month_selection = alt.selection_point(
+        name="selected_month", fields=["Month"], toggle=False, clear=False
+    )
+
+    def select_chart_month():
+        selection = st.session_state[chart_key].selection.get("selected_month", [])
+        if selection and selection[0].get("Month") in months:
+            st.session_state.filter_month = selection[0]["Month"]
+
     monthly_chart = (
         alt.Chart(monthly_comparison)
-        .mark_bar(color="#287A68", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
         .encode(
             x=alt.X("Month:N", sort=months, axis=alt.Axis(title=None, labelAngle=0, grid=False)),
             y=alt.Y("Spending:Q", axis=alt.Axis(title=None, format="$,.0f", grid=False)),
+            color=alt.condition(
+                alt.datum.Month == st.session_state.filter_month,
+                alt.value("#287A68"),
+                alt.value("#8FBFB0"),
+            ),
             tooltip=[
                 alt.Tooltip("Month:N", title="Month"),
                 alt.Tooltip("Spending:Q", title="Spending", format="$,.2f"),
             ],
         )
+        .add_params(month_selection)
         .properties(height=210)
     )
-    st.altair_chart(monthly_chart, width="stretch", alt=f"Monthly spending totals for {chart_year}")
+    st.altair_chart(
+        monthly_chart,
+        key=chart_key,
+        on_select=select_chart_month,
+        width="stretch",
+        alt=f"Monthly spending totals for {chart_year}",
+    )
 else:
     st.caption("Add transactions to see your month-by-month spending comparison.")
 
@@ -92,6 +114,9 @@ with filter_month_col:
         months,
         key="filter_month",
         format_func=lambda month: datetime.datetime.strptime(month, "%b").strftime("%B"),
+        on_change=lambda: st.session_state.update(
+            monthly_chart_revision=st.session_state.get("monthly_chart_revision", 0) + 1
+        ),
     )
 selected_month_label = datetime.datetime.strptime(selected_month, "%b").strftime("%B")
 
