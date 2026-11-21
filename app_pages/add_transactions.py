@@ -18,6 +18,8 @@ def show_processing_dialog(message):
 
 st.subheader("Upload a statement")
 st.caption("Import a PDF statement, review the detected transactions, then add them to your tracker.")
+if st.session_state.get("transaction_processing_error"):
+    st.error(st.session_state.pop("transaction_processing_error"))
 uploaded_file = st.file_uploader(
     "Choose a statement PDF",
     type=["pdf"],
@@ -258,7 +260,15 @@ if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
 
         dates = work_df["Date"].apply(lambda value: normalize_date(value, st.session_state.filter_year))
         descriptions = work_df["Description"].tolist()
-        categories = classify_transactions_batch(descriptions) if descriptions else []
+        try:
+            categories = classify_transactions_batch(descriptions) if descriptions else []
+        except Exception:
+            st.session_state.is_processing_pdf = False
+            st.session_state.pop("temp_df", None)
+            st.session_state.transaction_processing_error = (
+                "Could not categorize the transactions. Please try again."
+            )
+            st.rerun()
         new_rows = pd.DataFrame(
             {
                 "Date": dates,
@@ -308,7 +318,15 @@ if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
     show_processing_dialog("Categorizing and adding your transaction…")
     with st.spinner("Adding transaction..."):
         data = st.session_state.temp_manual
-        category = classify_transactions_batch([data["Description"]])[0]
+        try:
+            category = classify_transactions_batch([data["Description"]])[0]
+        except Exception:
+            st.session_state.is_submitting_manual = False
+            st.session_state.pop("temp_manual", None)
+            st.session_state.transaction_processing_error = (
+                "Could not categorize the transaction. Please try again."
+            )
+            st.rerun()
         new_row = pd.DataFrame(
             {
                 "Date": [pd.to_datetime(data["Date"])],
