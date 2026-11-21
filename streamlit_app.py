@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import json
 
 import pandas as pd
@@ -13,6 +14,12 @@ st.set_page_config(
     page_icon=":material/account_balance_wallet:",
     layout="wide",
 )
+
+
+@st.dialog("Please wait", dismissible=False, icon="spinner")
+def show_restore_dialog():
+    st.write("Restoring your transactions from the backup...")
+
 
 if "master_df" not in st.session_state:
     st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
@@ -97,20 +104,29 @@ with st.expander("Save or restore data", expanded=False, icon=":material/save:")
     uploaded_csv = st.file_uploader("Restore from CSV", type=["csv"], key="restore_csv")
     if uploaded_csv is None:
         st.session_state.csv_loaded = False
-    elif not st.session_state.csv_loaded:
-        restored_df = pd.read_csv(uploaded_csv)
-        for column in REQUIRED_COLUMNS:
-            if column not in restored_df.columns:
-                restored_df[column] = None
+        st.session_state.pop("csv_restore_fingerprint", None)
+        st.session_state.pop("csv_restore_error", None)
+    elif st.session_state.get("csv_restore_fingerprint") != hashlib.sha256(uploaded_csv.getvalue()).hexdigest():
+        show_restore_dialog()
+        try:
+            restored_df = pd.read_csv(uploaded_csv)
+            for column in REQUIRED_COLUMNS:
+                if column not in restored_df.columns:
+                    restored_df[column] = None
 
-        restored_df["Date"] = pd.to_datetime(restored_df["Date"], errors="coerce")
-        restored_df["Month"] = restored_df["Date"].dt.strftime("%b")
-        restored_df["Year"] = restored_df["Date"].dt.year
-        restored_df["Amount"] = pd.to_numeric(restored_df["Amount"], errors="coerce").fillna(0.0)
-        st.session_state.master_df = restored_df.reset_index(drop=True)
+            restored_df["Date"] = pd.to_datetime(restored_df["Date"], errors="coerce")
+            restored_df["Month"] = restored_df["Date"].dt.strftime("%b")
+            restored_df["Year"] = restored_df["Date"].dt.year
+            restored_df["Amount"] = pd.to_numeric(restored_df["Amount"], errors="coerce").fillna(0.0)
+            st.session_state.master_df = restored_df.reset_index(drop=True)
+            st.session_state.pop("csv_restore_error", None)
+        except (ValueError, UnicodeError, pd.errors.ParserError):
+            st.session_state.csv_restore_error = "Could not read the backup. Please choose a valid CSV file."
         st.session_state.csv_loaded = True
-        st.success("Your backup has been restored.")
+        st.session_state.csv_restore_fingerprint = hashlib.sha256(uploaded_csv.getvalue()).hexdigest()
         st.rerun()
+    if st.session_state.get("csv_restore_error"):
+        st.error(st.session_state.csv_restore_error)
 
 page = st.navigation(
     [
