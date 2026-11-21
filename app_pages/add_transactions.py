@@ -261,7 +261,7 @@ if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
         st.session_state.is_processing_pdf = False
         st.session_state.uploader_key += 1
         st.success(f"Added {len(new_rows)} transaction(s).")
-        st.rerun()
+        st.switch_page("app_pages/overview.py")
 
 st.divider()
 st.subheader("Add a transaction manually")
@@ -303,4 +303,4 @@ if st.session_state.is_submitting_manual and "temp_manual" in st.session_state:
         st.session_state.pop("temp_manual", None)
         st.session_state.is_submitting_manual = False
         st.success("Transaction added.")
-        st.rerun()
+        st.switch_page("app_pages/overview.py")

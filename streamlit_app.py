@@ -18,6 +18,8 @@ if "master_df" not in st.session_state:
     st.session_state.master_df = pd.DataFrame(columns=REQUIRED_COLUMNS)
 if "browser_storage_loaded" not in st.session_state:
     st.session_state.browser_storage_loaded = False
+if "processed_pdf_fingerprints" not in st.session_state:
+    st.session_state.processed_pdf_fingerprints = []
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 if "is_processing_pdf" not in st.session_state:
@@ -43,6 +45,7 @@ storage_result = browser_transaction_storage(
     storage_key="sg-spend-tracker-transactions-v1",
     ready=st.session_state.browser_storage_loaded,
     transactions=transaction_records,
+    processed_pdf_fingerprints=st.session_state.processed_pdf_fingerprints,
 )
 
 if not st.session_state.browser_storage_loaded:
@@ -54,6 +57,9 @@ if not st.session_state.browser_storage_loaded:
     if loaded_data.get("error"):
         st.session_state.browser_storage_error = loaded_data["error"]
     else:
+        st.session_state.processed_pdf_fingerprints = list(
+            dict.fromkeys(loaded_data.get("processedPdfFingerprints", []))
+        )
         stored_df = pd.DataFrame(loaded_data.get("transactions", []))
         if not stored_df.empty:
             for column in REQUIRED_COLUMNS:

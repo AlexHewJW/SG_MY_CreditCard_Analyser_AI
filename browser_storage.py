@@ -26,11 +26,15 @@ export default function (component) {
       const payload = saved ? JSON.parse(saved) : null
       setTriggerValue("loaded", {
         transactions: Array.isArray(payload?.transactions) ? payload.transactions : [],
+        processedPdfFingerprints: Array.isArray(payload?.processedPdfFingerprints)
+          ? payload.processedPdfFingerprints
+          : [],
         found: Boolean(saved),
       })
     } catch (error) {
       setTriggerValue("loaded", {
         transactions: [],
+        processedPdfFingerprints: [],
         found: false,
         error: "Browser storage could not be read.",
       })
@@ -39,7 +43,11 @@ export default function (component) {
   }
 
   try {
-    const serialized = JSON.stringify({ version: 1, transactions: data.transactions })
+    const serialized = JSON.stringify({
+      version: 1,
+      transactions: data.transactions,
+      processedPdfFingerprints: data.processedPdfFingerprints,
+    })
     if (localStorage.getItem(key) !== serialized) {
       localStorage.setItem(key, serialized)
     }
@@ -53,13 +61,14 @@ export default function (component) {
 )
 
 
-def browser_transaction_storage(*, storage_key, ready, transactions):
+def browser_transaction_storage(*, storage_key, ready, transactions, processed_pdf_fingerprints):
     return _STORAGE_COMPONENT(
         key="browser_transaction_storage",
         data={
             "storageKey": storage_key,
             "ready": ready,
             "transactions": transactions,
+            "processedPdfFingerprints": processed_pdf_fingerprints,
         },
         on_loaded_change=lambda: None,
         on_save_error_change=lambda: None,
