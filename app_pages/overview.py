@@ -142,7 +142,7 @@ if not master_df.empty:
 else:
     st.caption(":material/inbox: No transactions yet. Select Add transactions to import a statement or enter one manually.")
 
-if not master_df.empty:
+if not master_df.empty and not st.session_state.get("show_edit"):
     history = master_df.copy()
     history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
     history = history[
@@ -151,6 +151,11 @@ if not master_df.empty:
     ]
 
     category_options = sorted(history["Category"].dropna().astype(str).unique().tolist())
+    return_category = st.session_state.pop("transaction_return_category", None)
+    if return_category is not None:
+        st.session_state.category_filter = (
+            return_category if return_category in category_options else "All categories"
+        )
     selected_category = st.selectbox(
         "Filter by category",
         ["All categories", *category_options],
@@ -197,6 +202,7 @@ if not master_df.empty:
         edit_action, delete_action = st.columns(2)
         if edit_action.button("Edit selected transaction", icon=":material/edit:", disabled=selected_index is None):
             st.session_state.edit_index = selected_index
+            st.session_state.transaction_return_category = selected_category
             st.session_state.show_edit = True
             st.rerun()
         if delete_action.button("Delete selected transaction", icon=":material/delete:", disabled=selected_index is None):
