@@ -65,6 +65,15 @@ monthly_spending = (
 )
 st.subheader(f"Monthly spending · {chart_year}")
 if (monthly_spending > 0).any():
+    st.html("""
+        <style>
+        [class*="st-key-monthly_spending_"] [data-testid="stElementToolbarButton"]:has(button[aria-label^="Show data:"]),
+        [class*="st-key-monthly_spending_"] [data-testid="stElementToolbarButton"]:has(button[aria-label^="Download as PNG:"]),
+        [class*="st-key-monthly_spending_"] [data-testid="stElementToolbarButton"]:has(button[aria-label^="Copy Vega-Lite spec:"]) {
+            display: none;
+        }
+        </style>
+    """)
     monthly_comparison = pd.DataFrame({"Month": months, "Spending": monthly_spending.values})
     chart_key = f"monthly_spending_{chart_year}_{st.session_state.get('monthly_chart_revision', 0)}"
     month_selection = alt.selection_point(
@@ -163,7 +172,7 @@ if not master_df.empty:
         st.subheader("Spending by category")
         category_chart = px.pie(month_data, values="Amount", names="Category", hole=0.58)
         category_chart.update_layout(margin=dict(t=8, b=8, l=8, r=8), legend_title_text="Category")
-        st.plotly_chart(category_chart, width="stretch")
+        st.plotly_chart(category_chart, width="stretch", config={"displayModeBar": False})
 else:
     st.caption(":material/inbox: No transactions yet. Select Add transactions to import a statement or enter one manually.")
 
