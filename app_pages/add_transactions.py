@@ -44,9 +44,27 @@ if DEBUG_MODE:
             except Exception as error:
                 st.error(f"Could not open PDF: {error}")
 
+duplicate_pdf = False
 if uploaded_file:
     upload_fingerprint = hashlib.sha256(uploaded_file.getvalue()).hexdigest()
-    if st.session_state.get("parsed_pdf_fingerprint") != upload_fingerprint:
+    duplicate_pdf = upload_fingerprint in st.session_state.processed_pdf_fingerprints
+    if duplicate_pdf:
+        st.warning(
+            "This exact PDF has already been imported in this browser.",
+            title="Statement already imported",
+        )
+        if st.button("Choose a different statement", icon=":material/upload_file:"):
+            for state_key in (
+                "parsed_pdf_fingerprint",
+                "preview_df",
+                "pdf_parse_failed",
+                "pdf_parse_diagnostics",
+                "preview_editor_revision",
+            ):
+                st.session_state.pop(state_key, None)
+            st.session_state.uploader_key += 1
+            st.rerun()
+    elif st.session_state.get("parsed_pdf_fingerprint") != upload_fingerprint:
         show_processing_dialog("Reading your statement and finding transactions…")
         parse_diagnostics = {}
         try:
@@ -104,9 +122,9 @@ if uploaded_file:
             if key in ocr_diagnostics
         }
 
-    if st.session_state.get("pdf_parse_failed"):
+    if not duplicate_pdf and st.session_state.get("pdf_parse_failed"):
         st.warning("No transactions were detected. Check that the PDF is a supported statement with readable transaction details.")
-    if DEBUG_MODE:
+    if not duplicate_pdf and DEBUG_MODE:
         with st.expander("PDF parse diagnostics", expanded=st.session_state.get("pdf_parse_failed", False)):
             st.json(diagnostic_summary)
 else:
@@ -119,7 +137,7 @@ else:
     ):
         st.session_state.pop(state_key, None)
 
-if uploaded_file and not st.session_state.get("pdf_parse_failed"):
+if uploaded_file and not duplicate_pdf and not st.session_state.get("pdf_parse_failed"):
     preview_df = st.session_state.get("preview_df", pd.DataFrame())
     if not preview_df.empty:
         st.subheader("Review imported transactions")
@@ -255,6 +273,9 @@ if st.session_state.is_processing_pdf and "temp_df" in st.session_state:
         if not new_rows.empty:
             st.session_state.master_df = add_transactions(st.session_state.master_df, new_rows)
             st.session_state.jump_to_date = new_rows["Date"].max()
+            pdf_fingerprint = st.session_state.get("parsed_pdf_fingerprint")
+            if pdf_fingerprint and pdf_fingerprint not in st.session_state.processed_pdf_fingerprints:
+                st.session_state.processed_pdf_fingerprints.append(pdf_fingerprint)
 
         for state_key in ("temp_df", "preview_df", "parsed_pdf_fingerprint", "pdf_parse_failed"):
             st.session_state.pop(state_key, None)
