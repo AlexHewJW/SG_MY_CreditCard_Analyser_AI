@@ -1,6 +1,8 @@
 [theme]
 font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
 headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap"
+baseFontSize = 15
+headingFontSizes = ["2.15rem", "1.65rem", "1.25rem"]
 baseRadius = "small"
 buttonRadius = "small"
 showWidgetBorder = true

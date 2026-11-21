@@ -205,30 +205,49 @@ if not master_df.empty and not st.session_state.get("show_edit"):
         st.info("No transactions found.")
     else:
         history_view = history[["Date", "Description", "Amount", "Category"]].copy()
-        history_view["Date"] = history_view["Date"].dt.strftime("%d %b %Y")
+        history_view["Date"] = history_view["Date"].dt.strftime("%d %b")
         history_view["Amount"] = pd.to_numeric(history_view["Amount"], errors="coerce").fillna(0.0)
+        history_key = (
+            f"transaction_history_{selected_year}_{selected_month}_{selected_category}_"
+            f"{st.session_state.get('transaction_history_revision', 0)}"
+        )
+        previous_selection = st.session_state.get(history_key, {}).get("selection", {}).get("cells", [])
+        previous_row = previous_selection[0][0] if previous_selection else None
+        selected_history_index = (
+            history.index[previous_row]
+            if previous_row is not None and 0 <= previous_row < len(history)
+            else None
+        )
+        styled_history = history_view.style.apply(
+            lambda row: [
+                "background-color: #d3eee2; color: #173d30"
+                if row.name == selected_history_index else ""
+            ] * len(row),
+            axis=1,
+        )
         history_selection = st.dataframe(
-            history_view,
-            key=(
-                f"transaction_history_{selected_year}_{selected_month}_{selected_category}_"
-                f"{st.session_state.get('transaction_history_revision', 0)}"
-            ),
+            styled_history,
+            key=history_key,
             on_select="rerun",
-            selection_mode="single-row",
+            selection_mode="single-cell",
             hide_index=True,
-            height=360,
+            height=260,
             row_height=38,
             width="stretch",
             column_config={
-                "Date": st.column_config.TextColumn("Date", width="small"),
-                "Description": st.column_config.TextColumn("Merchant", width="large"),
-                "Amount": st.column_config.NumberColumn("Amount", format="S$%.2f", width="small"),
-                "Category": st.column_config.TextColumn("Category", width="medium"),
+                "Date": st.column_config.TextColumn("Date", width=60),
+                "Description": st.column_config.TextColumn("Merchant", width=120),
+                "Amount": st.column_config.NumberColumn("Amount", format="S$%.2f", width=75),
+                "Category": st.column_config.TextColumn("Category", width=95),
             },
             alt="Transactions for the selected month",
         )
-        selected_rows = history_selection.selection.rows
-        selected_index = history.index[selected_rows[0]] if selected_rows and selected_rows[0] < len(history) else None
+        selected_cells = history_selection.selection.cells
+        selected_row = selected_cells[0][0] if selected_cells else None
+        selected_index = history.index[selected_row] if selected_row is not None and 0 <= selected_row < len(history) else None
+        if selected_index is not None:
+            st.text(f"Merchant: {history.loc[selected_index, 'Description']}")
+            st.caption(f"Category: {history.loc[selected_index, 'Category']}")
         selection_context = (selected_year, selected_month, selected_category, selected_index)
         if st.session_state.get("confirm_delete_transaction") != selection_context:
             st.session_state.pop("confirm_delete_transaction", None)
