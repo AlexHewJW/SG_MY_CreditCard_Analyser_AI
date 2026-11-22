@@ -1,6 +1,6 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Get the URL from Streamlit Secrets
 DB_URL = st.secrets["database"]["url"]
@@ -35,24 +35,39 @@ def log_manual_category_override(
     new_category,
     source="manual_edit"
 ):
-    """Inserts an override event into the cloud DB."""
-    ts = datetime.utcnow()
+    ts = datetime.now(timezone.utc)
+
     query = text("""
-        INSERT INTO category_overrides
+        INSERT INTO public.category_overrides
         (ts, description, amount, old_category, new_category, source)
         VALUES (:ts, :desc, :amt, :old, :new, :src)
+        RETURNING ts, description, amount, old_category, new_category, source
     """)
-    
+
     try:
         with engine.begin() as conn:
-            conn.execute(query, {
+            result = conn.execute(query, {
                 "ts": ts,
                 "desc": description,
-                "amt": Decimal(str(amount)),
+                "amt": amount,
                 "old": old_category,
                 "new": new_category,
                 "src": source
             })
+
+            inserted = result.mappings().one()
+
+            st.success("Database INSERT successful!")
+            st.write("Inserted record:", dict(inserted))
+
+            # Verify the database can read the inserted record
+            check = conn.execute(text("""
+                SELECT COUNT(*)
+                FROM public.category_overrides
+                WHERE ts = :ts
+            """), {"ts": ts}).scalar()
+
+            st.write("Matching records:", check)
 
     except Exception as e:
         st.error(f"Database write failed: {e}")

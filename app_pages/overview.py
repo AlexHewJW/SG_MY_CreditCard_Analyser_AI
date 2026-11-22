@@ -4,7 +4,7 @@ import altair as alt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
+from telemetry import log_manual_category_override
 from transaction_service import delete_month
 
 overview_heading, add_action = st.columns([3, 2], vertical_alignment="bottom")
@@ -300,15 +300,34 @@ if st.session_state.get("show_edit"):
         cancel_clicked = st.button("Cancel")
 
     if save_clicked:
+        old_category = str(row["Category"])
+
+        # Log category override only when category changes
+        if old_category != category:
+            try:
+                log_manual_category_override(
+                    description=description,
+                    amount=amount,
+                    old_category=old_category,
+                    new_category=category,
+                    source="manual_edit"
+                )
+            except Exception:
+                st.error("Category change could not be logged.")
+                st.stop()
+
+        # Update local transaction data
         st.session_state.master_df.at[transaction_index, "Description"] = description
         st.session_state.master_df.at[transaction_index, "Amount"] = float(amount)
         st.session_state.master_df.at[transaction_index, "Category"] = category
         st.session_state.master_df.at[transaction_index, "Date"] = pd.to_datetime(transaction_date)
         st.session_state.master_df.at[transaction_index, "Month"] = transaction_date.strftime("%b")
         st.session_state.master_df.at[transaction_index, "Year"] = transaction_date.year
+
         st.session_state.master_df = st.session_state.master_df.reset_index(drop=True)
         st.session_state.show_edit = False
         st.rerun()
+
 
     if cancel_clicked:
         st.session_state.show_edit = False
