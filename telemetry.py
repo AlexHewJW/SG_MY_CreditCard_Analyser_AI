@@ -42,12 +42,11 @@ def log_manual_category_override(
         INSERT INTO public.category_overrides
         (ts, description, amount, old_category, new_category, source)
         VALUES (:ts, :desc, :amt, :old, :new, :src)
-        RETURNING ts, description, amount, old_category, new_category, source
     """)
 
     try:
         with engine.begin() as conn:
-            result = conn.execute(query, {
+            conn.execute(query, {
                 "ts": ts,
                 "desc": description,
                 "amt": Decimal(str(amount)),
@@ -55,20 +54,6 @@ def log_manual_category_override(
                 "new": new_category,
                 "src": source
             })
-
-            inserted = result.mappings().one()
-
-            st.success("Database INSERT successful!")
-            st.write("Inserted record:", dict(inserted))
-
-            # Verify the database can read the inserted record
-            check = conn.execute(text("""
-                SELECT COUNT(*)
-                FROM public.category_overrides
-                WHERE ts = :ts
-            """), {"ts": ts}).scalar()
-
-            st.write("Matching records:", check)
 
     except Exception as e:
         st.error(f"Database write failed: {e}")
