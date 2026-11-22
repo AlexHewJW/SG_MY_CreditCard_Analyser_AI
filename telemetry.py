@@ -1,6 +1,7 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
 from datetime import datetime, timezone
+from decimal import Decimal
 
 # Get the URL from Streamlit Secrets
 DB_URL = st.secrets["database"]["url"]
@@ -49,7 +50,7 @@ def log_manual_category_override(
             result = conn.execute(query, {
                 "ts": ts,
                 "desc": description,
-                "amt": amount,
+                "amt": Decimal(str(amount)),
                 "old": old_category,
                 "new": new_category,
                 "src": source
