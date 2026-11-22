@@ -12,12 +12,13 @@ def check_db():
     """Initializes the table if it doesn't exist."""
     query = """
     CREATE TABLE IF NOT EXISTS category_overrides (
-        ts TIMESTAMPTZ,
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         description TEXT,
-        amount NUMERIC,
+        amount NUMERIC(12,2),
         old_category TEXT,
         new_category TEXT,
-        source TEXT
+        source TEXT DEFAULT 'manual_edit'
     );
     """
     try:
@@ -37,7 +38,8 @@ def log_manual_category_override(
     """Inserts an override event into the cloud DB."""
     ts = datetime.utcnow()
     query = text("""
-        INSERT INTO category_overrides (ts, description, amount, old_category, new_category, source)
+        INSERT INTO category_overrides
+        (ts, description, amount, old_category, new_category, source)
         VALUES (:ts, :desc, :amt, :old, :new, :src)
     """)
     
@@ -46,11 +48,12 @@ def log_manual_category_override(
             conn.execute(query, {
                 "ts": ts,
                 "desc": description,
-                "amt": amount,
+                "amt": Decimal(str(amount)),
                 "old": old_category,
                 "new": new_category,
                 "src": source
             })
+
     except Exception as e:
         st.error(f"Database write failed: {e}")
-        raise e
+        raise
